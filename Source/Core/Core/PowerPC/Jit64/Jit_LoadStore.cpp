@@ -8,6 +8,7 @@
 
 #include "Common/Assert.h"
 #include "Common/BitSet.h"
+#include "Common/BitUtils.h"
 #include "Common/CommonTypes.h"
 #include "Common/MsgHandler.h"
 #include "Common/x64ABI.h"
@@ -15,6 +16,7 @@
 
 #include "Core/ConfigManager.h"
 #include "Core/CoreTiming.h"
+#include "Core/Debugger/BranchWatch.h"
 #include "Core/HW/CPU.h"
 #include "Core/HW/Memmap.h"
 #include "Core/PowerPC/Jit64/RegCache/JitRegCache.h"
@@ -228,6 +230,37 @@ void Jit64::lXXx(UGeckoInstruction inst)
     BSWAP(accessSize, Rd);
 }
 
+// For optimization in Jit64::WriteBranchWatch_dcbx.
+#if _WIN32  // 64-bit Windows: RSCRATCH_EXTRA is the same as ABI_PARAM1.
+static_assert(ABI_PARAM1 == RSCRATCH_EXTRA);
+#else  // 64-bit Unix / OS X: ABI_PARAM1 is one of the scratch registers.
+static_assert((BitSet32{ABI_PARAM1} & ABI_ALL_CALLER_SAVED) != BitSet32{});
+#endif
+
+// RSCRATCH2 will hold the amount of faked branch watch hits (loop count minus one)
+void Jit64::WriteBranchWatch_dcbx(u32 origin, u32 destination, UGeckoInstruction inst,
+                                  BitSet32 registers_in_use)
+{
+  registers_in_use |= BitSet32{RSCRATCH2};
+  const RCX64Reg branch_watch = gpr.Scratch(ABI_PARAM1);
+  const u64 fake_key =
+      Common::BitCast<u64>(Core::FakeBranchWatchCollectionKey{origin, destination});
+  MOV(64, R(branch_watch), ImmPtr(&m_branch_watch));
+  MOVZX(32, 8, RSCRATCH,
+        MDisp(branch_watch, static_cast<int>(Core::BranchWatch::GetOffsetOfRecordingActive())));
+  TEST(32, R(RSCRATCH), R(RSCRATCH));
+  FixupBranch branch = J_CC(CC_Z, Jump::Near);
+  ABI_PushRegistersAndAdjustStack(registers_in_use, 0);
+  // ABI_PARAM1 is already where it needs to be.
+  MOV(32, R(ABI_PARAM4), R(RSCRATCH2));     // Make sure to move RSCRATCH2 first, because...
+  MOV(32, R(ABI_PARAM3), Imm32(inst.hex));  // ABI_PARAM3 clobbers RSCRATCH2 on Linux!
+  MOV(64, R(ABI_PARAM2), Imm64(fake_key));  // ABI_PARAM2 clobbers RSCRATCH2 on Windows!
+  ABI_CallFunction(m_ppc_state.msr.IR ? &Core::BranchWatch::HitV_fk_n :
+                                        &Core::BranchWatch::HitP_fk_n);
+  ABI_PopRegistersAndAdjustStack(registers_in_use, 0);
+  SetJumpTarget(branch);
+}
+
 void Jit64::dcbx(UGeckoInstruction inst)
 {
   FALLBACK_IF(m_accurate_cpu_cache_enabled);
@@ -251,55 +284,63 @@ void Jit64::dcbx(UGeckoInstruction inst)
   RCX64Reg loop_counter;
   if (make_loop)
   {
-    // We'll execute somewhere between one single cacheline invalidation and however many are needed
-    // to reduce the downcount to zero, never exceeding the amount requested by the game.
-    // To stay consistent with the rest of the code we adjust the involved registers (CTR and Rb)
-    // by the amount of cache lines we invalidate minus one -- since we'll run the regular addi and
-    // bdnz afterwards! So if we invalidate a single cache line, we don't adjust the registers at
-    // all, if we invalidate 2 cachelines we adjust the registers by one step, and so on.
+    {
+      // We'll execute somewhere between one single cacheline invalidation and however many are
+      // needed to reduce the downcount to zero, never exceeding the amount requested by the game.
+      // To stay consistent with the rest of the code we adjust the involved registers (CTR and Rb)
+      // by the amount of cache lines we invalidate minus one -- since we'll run the regular addi
+      // and bdnz afterwards! So if we invalidate a single cache line, we don't adjust the registers
+      // at all, if we invalidate 2 cachelines we adjust the registers by one step, and so on.
 
-    RCX64Reg reg_cycle_count = gpr.Scratch();
-    RCX64Reg reg_downcount = gpr.Scratch();
-    loop_counter = gpr.Scratch();
-    RegCache::Realize(reg_cycle_count, reg_downcount, loop_counter);
+      RCX64Reg reg_cycle_count = gpr.Scratch();
+      RCX64Reg reg_downcount = gpr.Scratch();
+      loop_counter = gpr.Scratch();
+      RegCache::Realize(reg_cycle_count, reg_downcount, loop_counter);
 
-    // This must be true in order for us to pick up the DIV results and not trash any data.
-    static_assert(RSCRATCH == Gen::EAX && RSCRATCH2 == Gen::EDX);
+      // This must be true in order for us to pick up the DIV results and not trash any data.
+      static_assert(RSCRATCH == Gen::EAX && RSCRATCH2 == Gen::EDX);
 
-    // Alright, now figure out how many loops we want to do.
-    const u8 cycle_count_per_loop =
-        js.op[0].opinfo->num_cycles + js.op[1].opinfo->num_cycles + js.op[2].opinfo->num_cycles;
+      // Alright, now figure out how many loops we want to do.
+      const u8 cycle_count_per_loop =
+          js.op[0].opinfo->num_cycles + js.op[1].opinfo->num_cycles + js.op[2].opinfo->num_cycles;
 
-    // This is both setting the adjusted loop count to 0 for the downcount <= 0 case and clearing
-    // the upper bits for the DIV instruction in the downcount > 0 case.
-    XOR(32, R(RSCRATCH2), R(RSCRATCH2));
+      // This is both setting the adjusted loop count to 0 for the downcount <= 0 case and clearing
+      // the upper bits for the DIV instruction in the downcount > 0 case.
+      XOR(32, R(RSCRATCH2), R(RSCRATCH2));
 
-    MOV(32, R(RSCRATCH), PPCSTATE(downcount));
-    TEST(32, R(RSCRATCH), R(RSCRATCH));                       // if (downcount <= 0)
-    FixupBranch downcount_is_zero_or_negative = J_CC(CC_LE);  // only do 1 invalidation; else:
-    MOV(32, R(loop_counter), PPCSTATE_CTR);
-    MOV(32, R(reg_downcount), R(RSCRATCH));
-    MOV(32, R(reg_cycle_count), Imm32(cycle_count_per_loop));
-    DIV(32, R(reg_cycle_count));                  // RSCRATCH = downcount / cycle_count
-    LEA(32, RSCRATCH2, MDisp(loop_counter, -1));  // RSCRATCH2 = CTR - 1
-    // ^ Note that this CTR-1 implicitly handles the CTR == 0 case correctly.
-    CMP(32, R(RSCRATCH), R(RSCRATCH2));
-    CMOVcc(32, RSCRATCH2, R(RSCRATCH), CC_B);  // RSCRATCH2 = min(RSCRATCH, RSCRATCH2)
+      MOV(32, R(RSCRATCH), PPCSTATE(downcount));
+      TEST(32, R(RSCRATCH), R(RSCRATCH));                       // if (downcount <= 0)
+      FixupBranch downcount_is_zero_or_negative = J_CC(CC_LE);  // only do 1 invalidation; else:
+      MOV(32, R(loop_counter), PPCSTATE_CTR);
+      MOV(32, R(reg_downcount), R(RSCRATCH));
+      MOV(32, R(reg_cycle_count), Imm32(cycle_count_per_loop));
+      DIV(32, R(reg_cycle_count));                  // RSCRATCH = downcount / cycle_count
+      LEA(32, RSCRATCH2, MDisp(loop_counter, -1));  // RSCRATCH2 = CTR - 1
+      // ^ Note that this CTR-1 implicitly handles the CTR == 0 case correctly.
+      CMP(32, R(RSCRATCH), R(RSCRATCH2));
+      CMOVcc(32, RSCRATCH2, R(RSCRATCH), CC_B);  // RSCRATCH2 = min(RSCRATCH, RSCRATCH2)
 
-    // RSCRATCH2 now holds the amount of loops to execute minus 1, which is the amount we need to
-    // adjust downcount, CTR, and Rb by to exit the loop construct with the right values in those
-    // registers.
-    SUB(32, R(loop_counter), R(RSCRATCH2));
-    MOV(32, PPCSTATE_CTR, R(loop_counter));  // CTR -= RSCRATCH2
-    IMUL(32, reg_cycle_count, R(RSCRATCH2));
-    // ^ Note that this cannot overflow because it's limited by (downcount/cycle_count).
-    SUB(32, R(reg_downcount), R(reg_cycle_count));
-    MOV(32, PPCSTATE(downcount), R(reg_downcount));  // downcount -= (RSCRATCH2 * reg_cycle_count)
+      // RSCRATCH2 now holds the amount of loops to execute minus 1, which is the amount we need to
+      // adjust downcount, CTR, and Rb by to exit the loop construct with the right values in those
+      // registers.
+      SUB(32, R(loop_counter), R(RSCRATCH2));
+      MOV(32, PPCSTATE_CTR, R(loop_counter));  // CTR -= RSCRATCH2
+      IMUL(32, reg_cycle_count, R(RSCRATCH2));
+      // ^ Note that this cannot overflow because it's limited by (downcount/cycle_count).
+      SUB(32, R(reg_downcount), R(reg_cycle_count));
+      MOV(32, PPCSTATE(downcount), R(reg_downcount));  // downcount -= (RSCRATCH2 * reg_cycle_count)
 
-    SetJumpTarget(downcount_is_zero_or_negative);
+      SetJumpTarget(downcount_is_zero_or_negative);
 
-    // Load the loop_counter register with the amount of invalidations to execute.
-    LEA(32, loop_counter, MDisp(RSCRATCH2, 1));
+      // Load the loop_counter register with the amount of invalidations to execute.
+      LEA(32, loop_counter, MDisp(RSCRATCH2, 1));
+    }  // End scope of RegCache scratch registers
+
+    if (m_enable_debugging)
+    {
+      const PPCAnalyst::CodeOp& op = js.op[2];
+      WriteBranchWatch_dcbx(op.address, op.branchTo, op.inst, CallerSavedRegistersInUse());
+    }
   }
 
   X64Reg addr = RSCRATCH;

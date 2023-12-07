@@ -98,6 +98,12 @@ public:
   void WriteExternalExceptionExit();
   void WriteRfiExitDestInRSCRATCH();
   void WriteIdleExit(u32 destination);
+  void WriteBranchWatch(u32 origin, u32 destination, UGeckoInstruction inst,
+                        BitSet32 registers_in_use);
+  void WriteBranchWatchDestInRSCRATCH(u32 origin, UGeckoInstruction inst);
+  void WriteBranchWatch_dcbx(u32 origin, u32 destination, UGeckoInstruction inst,
+                             BitSet32 registers_in_use);
+
   bool Cleanup();
 
   void GenerateConstantOverflow(bool overflow);

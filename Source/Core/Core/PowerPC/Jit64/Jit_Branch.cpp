@@ -7,6 +7,7 @@
 #include "Common/CommonTypes.h"
 #include "Common/x64Emitter.h"
 #include "Core/CoreTiming.h"
+#include "Core/Debugger/BranchWatch.h"
 #include "Core/PowerPC/Gekko.h"
 #include "Core/PowerPC/Jit64/RegCache/JitRegCache.h"
 #include "Core/PowerPC/Jit64Common/Jit64PowerPCState.h"
@@ -66,6 +67,52 @@ void Jit64::rfi(UGeckoInstruction inst)
   WriteRfiExitDestInRSCRATCH();
 }
 
+// This is relevant to WriteBranchWatch and WriteBranchWatchDestInRSCRATCH.
+#if _WIN32  // 64-bit Windows: RSCRATCH_EXTRA is the same as ABI_PARAM1.
+static_assert(ABI_PARAM1 == RSCRATCH_EXTRA);
+#else  // 64-bit Unix / OS X: ABI_PARAM1 is also one of the scratch registers.
+static_assert((BitSet32{ABI_PARAM1} & ABI_ALL_CALLER_SAVED) != BitSet32{});
+#endif
+
+void Jit64::WriteBranchWatch(u32 origin, u32 destination, UGeckoInstruction inst,
+                             BitSet32 registers_in_use)
+{
+  const RCX64Reg scratch = gpr.Scratch(ABI_PARAM1);
+  const u64 fake_key =
+      Common::BitCast<u64>(Core::FakeBranchWatchCollectionKey{origin, destination});
+  MOV(64, R(scratch), ImmPtr(&m_branch_watch));
+  MOVZX(32, 8, RSCRATCH,
+        MDisp(scratch, static_cast<int>(Core::BranchWatch::GetOffsetOfRecordingActive())));
+  TEST(32, R(RSCRATCH), R(RSCRATCH));
+  FixupBranch branch = J_CC(CC_Z, Jump::Near);
+  ABI_PushRegistersAndAdjustStack(registers_in_use, 0);
+  // ABI_PARAM1 is already where it needs to be.
+  MOV(64, R(ABI_PARAM2), Imm64(fake_key));
+  MOV(32, R(ABI_PARAM3), Imm32(inst.hex));
+  ABI_CallFunction(m_ppc_state.msr.IR ? &Core::BranchWatch::HitV_fk : &Core::BranchWatch::HitP_fk);
+  ABI_PopRegistersAndAdjustStack(registers_in_use, 0);
+  SetJumpTarget(branch);
+}
+
+// Watch bcctrx and bclrx branches, and don't disturb the contents of RSCRATCH!
+void Jit64::WriteBranchWatchDestInRSCRATCH(u32 origin, UGeckoInstruction inst)
+{
+  const RCX64Reg scratch = gpr.Scratch(ABI_PARAM1);
+  MOV(64, R(scratch), ImmPtr(&m_branch_watch));
+  MOVZX(32, 8, RSCRATCH2,
+        MDisp(scratch, static_cast<int>(Core::BranchWatch::GetOffsetOfRecordingActive())));
+  TEST(32, R(RSCRATCH2), R(RSCRATCH2));
+  FixupBranch branch = J_CC(CC_Z, Jump::Near);
+  ABI_PushRegistersAndAdjustStack({RSCRATCH}, 0);
+  // ABI_PARAM1 is already where it needs to be.
+  MOV(32, R(ABI_PARAM2), Imm32(origin));
+  MOV(32, R(ABI_PARAM3), R(RSCRATCH));
+  MOV(32, R(ABI_PARAM4), Imm32(inst.hex));
+  ABI_CallFunction(m_ppc_state.msr.IR ? &Core::BranchWatch::HitV : &Core::BranchWatch::HitP);
+  ABI_PopRegistersAndAdjustStack({RSCRATCH}, 0);
+  SetJumpTarget(branch);
+}
+
 void Jit64::bx(UGeckoInstruction inst)
 {
   INSTRUCTION_START
@@ -81,6 +128,9 @@ void Jit64::bx(UGeckoInstruction inst)
   // Because PPCAnalyst::Flatten() merged the blocks.
   if (!js.isLastInstruction)
   {
+    if (m_enable_debugging)
+      WriteBranchWatch(js.compilerPC, js.op->branchTo, inst, CallerSavedRegistersInUse());
+
     if (inst.LK && !js.op->skipLRStack)
     {
       // We have to fake the stack as the RET instruction was not
@@ -93,6 +143,9 @@ void Jit64::bx(UGeckoInstruction inst)
 
   gpr.Flush();
   fpr.Flush();
+
+  if (m_enable_debugging)
+    WriteBranchWatch(js.compilerPC, js.op->branchTo, inst, {});
 
 #ifdef ACID_TEST
   if (inst.LK)
@@ -144,6 +197,9 @@ void Jit64::bcx(UGeckoInstruction inst)
   if (!js.isLastInstruction && (inst.BO & BO_DONT_DECREMENT_FLAG) &&
       (inst.BO & BO_DONT_CHECK_CONDITION))
   {
+    if (m_enable_debugging)
+      WriteBranchWatch(js.compilerPC, js.op->branchTo, inst, CallerSavedRegistersInUse());
+
     if (inst.LK && !js.op->skipLRStack)
     {
       // We have to fake the stack as the RET instruction was not
@@ -159,6 +215,9 @@ void Jit64::bcx(UGeckoInstruction inst)
     RCForkGuard fpr_guard = fpr.Fork();
     gpr.Flush();
     fpr.Flush();
+
+    if (m_enable_debugging)
+      WriteBranchWatch(js.compilerPC, js.op->branchTo, inst, {});
 
     if (js.op->branchIsIdleLoop)
     {
@@ -204,6 +263,8 @@ void Jit64::bcctrx(UGeckoInstruction inst)
     if (inst.LK_3)
       MOV(32, PPCSTATE_LR, Imm32(js.compilerPC + 4));  // LR = PC + 4;
     AND(32, R(RSCRATCH), Imm32(0xFFFFFFFC));
+    if (m_enable_debugging)
+      WriteBranchWatchDestInRSCRATCH(js.compilerPC, inst);
     WriteExitDestInRSCRATCH(inst.LK_3, js.compilerPC + 4);
   }
   else
@@ -215,17 +276,19 @@ void Jit64::bcctrx(UGeckoInstruction inst)
 
     FixupBranch b =
         JumpIfCRFieldBit(inst.BI >> 2, 3 - (inst.BI & 3), !(inst.BO_2 & BO_BRANCH_IF_TRUE));
-    MOV(32, R(RSCRATCH), PPCSTATE_CTR);
-    AND(32, R(RSCRATCH), Imm32(0xFFFFFFFC));
-    // MOV(32, PPCSTATE(pc), R(RSCRATCH)); => Already done in WriteExitDestInRSCRATCH()
-    if (inst.LK_3)
-      MOV(32, PPCSTATE_LR, Imm32(js.compilerPC + 4));  // LR = PC + 4;
-
     {
       RCForkGuard gpr_guard = gpr.Fork();
       RCForkGuard fpr_guard = fpr.Fork();
       gpr.Flush();
       fpr.Flush();
+
+      MOV(32, R(RSCRATCH), PPCSTATE_CTR);
+      AND(32, R(RSCRATCH), Imm32(0xFFFFFFFC));
+      // MOV(32, PPCSTATE(pc), R(RSCRATCH)); => Already done in WriteExitDestInRSCRATCH()
+      if (inst.LK_3)
+        MOV(32, PPCSTATE_LR, Imm32(js.compilerPC + 4));  // LR = PC + 4;
+      if (m_enable_debugging)
+        WriteBranchWatchDestInRSCRATCH(js.compilerPC, inst);
       WriteExitDestInRSCRATCH(inst.LK_3, js.compilerPC + 4);
       // Would really like to continue the block here, but it ends. TODO.
     }
@@ -268,22 +331,24 @@ void Jit64::bclrx(UGeckoInstruction inst)
   AND(32, PPCSTATE(cr), Imm32(~(0xFF000000)));
 #endif
 
-  MOV(32, R(RSCRATCH), PPCSTATE_LR);
-  // We don't have to do this because WriteBLRExit handles it for us. Specifically, since we only
-  // ever push
-  // divisible-by-four instruction addresses onto the stack, if the return address matches, we're
-  // already
-  // good. If it doesn't match, the mispredicted-BLR code handles the fixup.
-  if (!m_enable_blr_optimization)
-    AND(32, R(RSCRATCH), Imm32(0xFFFFFFFC));
-  if (inst.LK)
-    MOV(32, PPCSTATE_LR, Imm32(js.compilerPC + 4));
-
   {
     RCForkGuard gpr_guard = gpr.Fork();
     RCForkGuard fpr_guard = fpr.Fork();
     gpr.Flush();
     fpr.Flush();
+
+    MOV(32, R(RSCRATCH), PPCSTATE_LR);
+    // We don't have to do this because WriteBLRExit handles it for us. Specifically, since we only
+    // ever push divisible-by-four instruction addresses onto the stack, if the return address
+    // matches, we're already good. If it doesn't match, the mispredicted-BLR code handles the
+    // fixup.
+    if (!m_enable_blr_optimization)
+      AND(32, R(RSCRATCH), Imm32(0xFFFFFFFC));
+    if (inst.LK)
+      MOV(32, PPCSTATE_LR, Imm32(js.compilerPC + 4));
+
+    if (m_enable_debugging)
+      WriteBranchWatchDestInRSCRATCH(js.compilerPC, inst);
 
     if (js.op->branchIsIdleLoop)
     {

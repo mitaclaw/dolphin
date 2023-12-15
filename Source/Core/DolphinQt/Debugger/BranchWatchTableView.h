@@ -4,26 +4,30 @@
 #include <QTableView>
 
 #include "Common/CommonTypes.h"
-#include "DolphinQt/Debugger/BranchWatchTableModel.h"
 
 namespace Core
 {
 class System;
 }
+class BranchWatchDialog;
 class BranchWatchProxyModel;
 class CodeWidget;
+
+enum BranchWatchTableModelColumn : int;
+enum BranchWatchTableModelUserRole : int;
 
 class BranchWatchTableView final : public QTableView
 {
   Q_OBJECT
 
 public:
-  using Column = BranchWatchTableModel::Column;
-  using UserRole = BranchWatchTableModel::UserRole;
+  using Column = BranchWatchTableModelColumn;
+  using UserRole = BranchWatchTableModelUserRole;
 
-  explicit BranchWatchTableView(Core::System& system, CodeWidget* code_widget,
-                                QWidget* parent = nullptr)
-      : QTableView(parent), m_system(system), m_code_widget(code_widget)
+  explicit BranchWatchTableView(Core::System& system, BranchWatchDialog* branch_watch_dialog,
+                                CodeWidget* code_widget, QWidget* parent = nullptr)
+      : QTableView(parent), m_system(system), m_branch_watch_dialog(branch_watch_dialog),
+        m_code_widget(code_widget)
   {
   }
   BranchWatchProxyModel* model() const;
@@ -33,12 +37,15 @@ public:
   void OnDelete(const QModelIndex& index);
   void OnDelete(QModelIndexList index_list);
   void OnDeleteKeypress();
-  void OnSetBLR(u32 data);
-  void OnSetNOP(u32 data);
-  void OnCopyAddress(u32 addr);
+  void OnSetBLR(const QModelIndex& index);
+  void OnSetNOP(const QModelIndex& index);
+  void OnCopyAddress(const QModelIndex& index);
+
+  void SetInspected(const QModelIndex& index);
 
 private:
   Core::System& m_system;
 
+  BranchWatchDialog* m_branch_watch_dialog;
   CodeWidget* m_code_widget;
 };

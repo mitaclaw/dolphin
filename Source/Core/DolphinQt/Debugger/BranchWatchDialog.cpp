@@ -100,6 +100,7 @@ QLayout* BranchWatchDialog::CreateLayout()
         ->addAction(tr("Destination &Symbols"), this,
                     &BranchWatchDialog::OnToggleDestinationSymbols)
         ->setCheckable(true);
+    menu_tool->addAction(tr("Wipe &Inspection Data"), this, &BranchWatchDialog::OnWipeInspection);
     menu_tool->addAction(tr("&Help"), this, &BranchWatchDialog::OnHelp);
 
     menu_bar->addMenu(menu_tool);
@@ -119,7 +120,10 @@ QLayout* BranchWatchDialog::CreateLayout()
                                       new BranchWatchTableModel(m_system, m_branch_watch));
     m_table_proxy->setSortRole(BranchWatchTableModel::UserRole::SortRole);
 
-    auto* table_view = new BranchWatchTableView(m_system, m_code_widget);
+    m_table_model->setFont(settings.GetDebugFont());
+    connect(&settings, &Settings::DebugFontChanged, m_table_model, &BranchWatchTableModel::setFont);
+
+    auto* table_view = new BranchWatchTableView(m_system, this, m_code_widget);
     table_view->setModel(m_table_proxy);
     table_view->setSortingEnabled(true);
     table_view->sortByColumn(BranchWatchTableModel::Column::Origin, Qt::AscendingOrder);
@@ -133,9 +137,7 @@ QLayout* BranchWatchDialog::CreateLayout()
     table_view->horizontalHeader()->setStretchLastSection(true);
     table_view->verticalHeader()->hide();
     table_view->setCornerButtonEnabled(false);
-    table_view->setFont(settings.GetDebugFont());
 
-    connect(&settings, &Settings::DebugFontChanged, table_view, &BranchWatchTableView::setFont);
     connect(table_view, &BranchWatchTableView::clicked, table_view,
             &BranchWatchTableView::OnClicked);
     connect(table_view, &BranchWatchTableView::customContextMenuRequested, table_view,
@@ -436,7 +438,12 @@ void BranchWatchDialog::OnBranchNotOverwritten()
 
 void BranchWatchDialog::OnWipeRecentHits()
 {
-  m_table_model->OnWipeRecentHits(Core::CPUThreadGuard{m_system});
+  m_table_model->OnWipeRecentHits();
+}
+
+void BranchWatchDialog::OnWipeInspection()
+{
+  m_table_model->OnWipeInspection();
 }
 
 void BranchWatchDialog::OnTimeout()
@@ -462,13 +469,14 @@ void BranchWatchDialog::OnHelp()
       this, tr("Branch Watch Tool Help (1/4)"),
       tr("Branch Watch is a code-searching tool that can isolate branches tracked by the emulated "
          "CPU by testing candidates with simple criteria. If you are familiar with Cheat Engine's "
-         "Ultimap, Branch Watch is similar to that. Press the \"Start Recording\" button to turn "
-         "on Branch Watch. Branch Watch persists across emulation sessions, and a snapshot of your "
-         "progress can be saved to and loaded from the User Directory to persist after Dolphin "
-         "Emulator is closed. \"Save As...\" and \"Load From...\" actions are also available, and "
-         "auto-saving can be enabled to save a snapshot at every step of the search. The \"Pause "
-         "Recording\" button will halt Branch Watch from tracking further branch hits until it is "
-         "told to resume. Press the \"Clear Branch Watch\" button to start over."));
+         "Ultimap, Branch Watch is similar to that.\n\n"
+         "Press the \"Start Branch Watch\" button to activate Branch Watch. Branch Watch persists "
+         "across emulation sessions, and a snapshot of your progress can be saved to and loaded "
+         "from the User Directory to persist after Dolphin Emulator is closed. \"Save As...\" and "
+         "\"Load From...\" actions are also available, and auto-saving can be enabled to save a "
+         "snapshot at every step of a search. The \"Pause Branch Watch\" button will halt Branch "
+         "Watch from tracking further branch hits until it is told to resume. Press the \"Clear "
+         "Branch Watch\" button to clear all candidates and return to the blacklist phase."));
   ModalMessageBox::information(
       this, tr("Branch Watch Tool Help (2/4)"),
       tr("Branch Watch starts in the blacklist phase, meaning no candidates have been chosen yet, "
@@ -484,24 +492,28 @@ void BranchWatchDialog::OnHelp()
          "executed since the last time it was checked. It is also possible to reduce the "
          "candidates by determining whether a branch instruction has or has not been overwritten "
          "since it was first hit. Filter the candidates by branch kind, origin or destination "
-         "address, and symbol name. After enough passes and experimentation, you may be able to "
-         "find function calls and conditional branches that only execute when an action is "
-         "performed in the emulated software."));
+         "address, and symbol name.\n\n"
+         "After enough passes and experimentation, you may be able to find function calls and "
+         "conditional branches that only execute when an action is performed in the emulated "
+         "software."));
   ModalMessageBox::information(
       this, tr("Branch Watch Tool Help (4/4)"),
       tr("Rows in the table can be left-clicked on the origin, destination, and symbol columns to "
          "view the associated address in Code View. Right-clicking a row will bring up a context "
-         "menu. If the origin column of a row is right-clicked, an action to replace the branch "
+         "menu.\n\n"
+         "If the origin column of a row is right-clicked, an action to replace the branch "
          "instruction with a NOP instruction (no operation), and an action to copy the address to "
-         "the clipboard will be available. If the destination column of a row is right-clicked, an "
-         "action to replace the instruction at the destination with a BLR instruction (branch to "
-         "link register) will be available, but only if the branch instruction at the origin "
-         "updates the link register, and an action to copy the address to the clipboard will be "
-         "available. If the symbol column of a row is right-clicked, the action to replace the "
-         "instruction at the start of the symbol with a BLR instruction will be available, but "
-         "only if a symbol enveloping the origin address is found. All context menus have the "
-         "action to delete that row from the candidates. If multiple rows are selected, the only "
-         "action in any context menu will be to delete all selected rows from the candidates."));
+         "the clipboard will be available.\n\n"
+         "If the destination column of a row is right-clicked, an action to replace the "
+         "instruction at the destination with a BLR instruction (branch to link register) will be "
+         "available, but only if the branch instruction at the origin updates the link register, "
+         "and an action to copy the address to the clipboard will be available.\n\n"
+         "If the symbol column of a row is right-clicked, the action to replace the instruction at "
+         "the start of the symbol with a BLR instruction will be available, but only if a symbol "
+         "enveloping the origin address is found.\n\n"
+         "All context menus have the action to delete that row from the candidates. If multiple "
+         "rows are selected, the only action in any context menu will be to delete all selected "
+         "rows from the candidates."));
 }
 
 void BranchWatchDialog::OnToggleAutoSave(bool checked)

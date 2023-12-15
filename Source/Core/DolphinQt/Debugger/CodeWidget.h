@@ -72,9 +72,9 @@ private:
 
   Core::System& m_system;
 
-  BranchWatchDialog* m_diff_dialog;
+  BranchWatchDialog* m_branch_watch_dialog;
   QLineEdit* m_search_address;
-  QPushButton* m_branch_watch_dialog;
+  QPushButton* m_branch_watch;
 
   QLineEdit* m_search_callstack;
   QListWidget* m_callstack_list;

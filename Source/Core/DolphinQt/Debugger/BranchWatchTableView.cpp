@@ -15,6 +15,7 @@
 #include "Core/Debugger/PPCDebugInterface.h"
 #include "Core/PowerPC/PowerPC.h"
 #include "Core/System.h"
+#include "DolphinQt/Debugger/BranchWatchDialog.h"
 #include "DolphinQt/Debugger/BranchWatchProxyModel.h"
 #include "DolphinQt/Debugger/BranchWatchTableModel.h"
 #include "DolphinQt/Debugger/CodeWidget.h"
@@ -64,32 +65,29 @@ void BranchWatchTableView::OnContextMenu(const QPoint& pos)
     QMenu* menu = new QMenu;
 
     menu->addAction(tr("&Delete"), [this, index]() { OnDelete(index); });
-    const QVariant v = model()->data(index, UserRole::OnClickRole);
     switch (index.column())
     {
     case Column::Origin:
     {
-      const u32 addr = v.value<u32>();
-      menu->addAction(tr("Insert &NOP"), [this, addr]() { OnSetNOP(addr); })
+      menu->addAction(tr("Insert &NOP"), [this, index]() { OnSetNOP(index); })
           ->setEnabled(Core::GetState() != Core::State::Uninitialized);
-      menu->addAction(tr("&Copy Address"), [this, addr] { OnCopyAddress(addr); });
+      menu->addAction(tr("&Copy Address"), [this, index]() { OnCopyAddress(index); });
       break;
     }
     case Column::Destination:
     {
-      const u32 addr = v.value<u32>();
-      menu->addAction(tr("Insert &BLR"), [this, addr]() { OnSetBLR(addr); })
+      const QVariant v =
+          model()->data(index.siblingAtColumn(Column::Instruction), UserRole::OnClickRole);
+      menu->addAction(tr("Insert &BLR"), [this, index]() { OnSetBLR(index); })
           ->setEnabled(Core::GetState() != Core::State::Uninitialized &&
-                       InstructionSetsLR(model()
-                                             ->data(index.siblingAtColumn(Column::Instruction),
-                                                    UserRole::OnClickRole)
-                                             .value<u32>()));
-      menu->addAction(tr("&Copy Address"), [this, addr] { OnCopyAddress(addr); });
+                       InstructionSetsLR(v.value<u32>()));
+      menu->addAction(tr("&Copy Address"), [this, index]() { OnCopyAddress(index); });
       break;
     }
     case Column::Symbol:
     {
-      menu->addAction(tr("Insert &BLR at start"), [this, v]() { OnSetBLR(v.value<u32>()); })
+      const QVariant v = model()->data(index, UserRole::OnClickRole);
+      menu->addAction(tr("Insert &BLR at start"), [this, index]() { OnSetBLR(index); })
           ->setEnabled(Core::GetState() != Core::State::Uninitialized && v.isValid());
       break;
     }
@@ -101,22 +99,26 @@ void BranchWatchTableView::OnContextMenu(const QPoint& pos)
 void BranchWatchTableView::OnDelete(const QModelIndex& index)
 {
   model()->OnDelete(index);
+  m_branch_watch_dialog->UpdateStatus();
 }
 
 void BranchWatchTableView::OnDelete(QModelIndexList index_list)
 {
   model()->OnDelete(std::move(index_list));
+  m_branch_watch_dialog->UpdateStatus();
 }
 
 void BranchWatchTableView::OnDeleteKeypress()
 {
-  model()->OnDelete(selectionModel()->selectedRows());
+  OnDelete(selectionModel()->selectedRows());
 }
 
-void BranchWatchTableView::OnSetBLR(const u32 addr)
+void BranchWatchTableView::OnSetBLR(const QModelIndex& index)
 {
+  const u32 addr = model()->data(index, UserRole::OnClickRole).value<u32>();
   m_system.GetPowerPC().GetDebugInterface().SetPatch(Core::CPUThreadGuard{m_system}, addr,
                                                      0x4e800020);
+  SetInspected(index);
   // TODO: This is not ideal. What I need is a signal for when memory has been changed by the GUI,
   // but I cannot find one. UpdateDisasmDialog comes close, but does too much in one signal. For
   // example, CodeViewWidget will scroll to the current PC when UpdateDisasmDialog is signaled. This
@@ -127,15 +129,23 @@ void BranchWatchTableView::OnSetBLR(const u32 addr)
   m_code_widget->Update();
 }
 
-void BranchWatchTableView::OnSetNOP(const u32 addr)
+void BranchWatchTableView::OnSetNOP(const QModelIndex& index)
 {
+  const u32 addr = model()->data(index, UserRole::OnClickRole).value<u32>();
   m_system.GetPowerPC().GetDebugInterface().SetPatch(Core::CPUThreadGuard{m_system}, addr,
                                                      0x60000000);
+  SetInspected(index);
   // Same issue as OnSetBLR.
   m_code_widget->Update();
 }
 
-void BranchWatchTableView::OnCopyAddress(const u32 addr)
+void BranchWatchTableView::OnCopyAddress(const QModelIndex& index)
 {
+  const u32 addr = model()->data(index, UserRole::OnClickRole).value<u32>();
   QApplication::clipboard()->setText(QString::number(addr, 16));
+}
+
+void BranchWatchTableView::SetInspected(const QModelIndex& index)
+{
+  model()->SetInspected(index);
 }

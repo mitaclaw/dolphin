@@ -16,11 +16,10 @@ BranchWatchTableModel* BranchWatchProxyModel::sourceModel() const
 
 bool BranchWatchProxyModel::filterAcceptsRow(int source_row, const QModelIndex&) const
 {
-  if (!IsBranchFiltered(m_branch_watch.GetSelection()[source_row].first->first.original_inst.hex))
+  const Core::BranchWatchCollectionKey& k =
+      m_branch_watch.GetSelection()[source_row].collection_ptr->first;
+  if (!IsBranchFiltered(k.original_inst.hex))
     return false;
-
-  const QVariant& v_symbol = sourceModel()->GetSymbolList()[source_row].first;
-  const Core::BranchWatchKey& k = m_branch_watch.GetSelection()[source_row].first->first;
 
   if (m_origin_min.has_value() && k.origin_addr < m_origin_min.value())
     return false;
@@ -32,9 +31,11 @@ bool BranchWatchProxyModel::filterAcceptsRow(int source_row, const QModelIndex&)
     return false;
 
   if (!m_symbol_name.isEmpty())
-    if (!v_symbol.isValid() || !v_symbol.value<QString>().contains(m_symbol_name))
+  {
+    const QVariant& symbol_name_v = sourceModel()->GetSymbolNameVariant(source_row);
+    if (!symbol_name_v.isValid() || !symbol_name_v.value<QString>().contains(m_symbol_name))
       return false;
-
+  }
   return true;
 }
 
@@ -76,4 +77,9 @@ bool BranchWatchProxyModel::IsBranchFiltered(u32 hex) const
     }
   }
   return false;
+}
+
+void BranchWatchProxyModel::SetInspected(const QModelIndex& index)
+{
+  sourceModel()->SetInspected(mapToSource(index));
 }

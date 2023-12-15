@@ -317,7 +317,7 @@ void Jit64::dcbx(UGeckoInstruction inst)
       const auto& op = js.op[2];
       // Win64 fastcall ABI only supports up to ABI_PARAM4, so pack this into a u64.
       MOV(64, R(ABI_PARAM2),
-          Imm64(Common::BitCast<u64>(Core::FakeBranchWatchKey{op.address, op.branchTo})));
+          Imm64(Common::BitCast<u64>(Core::FakeBranchWatchCollectionKey{op.address, op.branchTo})));
       MOV(32, R(ABI_PARAM3), Imm32(op.inst.hex));
       LEA(32, ABI_PARAM4, MDisp(loop_counter, -1));
       ABI_CallFunction(m_ppc_state.msr.IR ? &Core::BranchWatch::HitV_n :

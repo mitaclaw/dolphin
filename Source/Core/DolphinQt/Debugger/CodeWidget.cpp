@@ -38,7 +38,8 @@ static const QString BOX_SPLITTER_STYLESHEET = QStringLiteral(
 
 CodeWidget::CodeWidget(QWidget* parent)
     : QDockWidget(parent), m_system(Core::System::GetInstance()),
-      m_diff_dialog(new BranchWatchDialog(m_system, m_system.GetPowerPC().GetBranchWatch(), this))
+      m_branch_watch_dialog(
+          new BranchWatchDialog(m_system, m_system.GetPowerPC().GetBranchWatch(), this))
 {
   setWindowTitle(tr("Code"));
   setObjectName(QStringLiteral("code"));
@@ -108,7 +109,7 @@ void CodeWidget::CreateWidgets()
   layout->setSpacing(0);
 
   m_search_address = new QLineEdit;
-  m_branch_watch_dialog = new QPushButton(tr("Branch Watch"));
+  m_branch_watch = new QPushButton(tr("Branch Watch"));
   m_code_view = new CodeViewWidget;
 
   m_search_address->setPlaceholderText(tr("Search Address"));
@@ -152,7 +153,7 @@ void CodeWidget::CreateWidgets()
   m_code_splitter->addWidget(m_code_view);
 
   layout->addWidget(m_search_address, 0, 0);
-  layout->addWidget(m_branch_watch_dialog, 0, 2);
+  layout->addWidget(m_branch_watch, 0, 2);
   layout->addWidget(m_code_splitter, 1, 0, -1, -1);
 
   QWidget* widget = new QWidget(this);
@@ -182,7 +183,7 @@ void CodeWidget::ConnectWidgets()
   });
   connect(m_search_callstack, &QLineEdit::textChanged, this, &CodeWidget::UpdateCallstack);
 
-  connect(m_branch_watch_dialog, &QPushButton::pressed, this, &CodeWidget::OnBranchWatchDialog);
+  connect(m_branch_watch, &QPushButton::pressed, this, &CodeWidget::OnBranchWatchDialog);
 
   connect(m_symbols_list, &QListWidget::itemPressed, this, &CodeWidget::OnSelectSymbol);
   connect(m_callstack_list, &QListWidget::itemPressed, this, &CodeWidget::OnSelectCallstack);
@@ -211,11 +212,11 @@ void CodeWidget::ConnectWidgets()
 
 void CodeWidget::OnBranchWatchDialog()
 {
-  m_diff_dialog->setWindowFlag(Qt::WindowMinimizeButtonHint);
-  SetQWidgetWindowDecorations(m_diff_dialog);
-  m_diff_dialog->open();
-  m_diff_dialog->raise();
-  m_diff_dialog->activateWindow();
+  m_branch_watch_dialog->setWindowFlag(Qt::WindowMinimizeButtonHint);
+  SetQWidgetWindowDecorations(m_branch_watch_dialog);
+  m_branch_watch_dialog->open();
+  m_branch_watch_dialog->raise();
+  m_branch_watch_dialog->activateWindow();
 }
 
 void CodeWidget::OnSearchAddress()
@@ -393,7 +394,9 @@ void CodeWidget::UpdateSymbols()
 
   m_symbols_list->sortItems();
 
-  m_diff_dialog->UpdateSymbols();
+  // TODO: There seems to be a lack of a ubiquitous signal for when symbols change.
+  // This is the best location to catch the signals from MenuBar and CodeViewWidget.
+  m_branch_watch_dialog->UpdateSymbols();
 }
 
 void CodeWidget::UpdateFunctionCalls(const Common::Symbol* symbol)
@@ -465,7 +468,8 @@ void CodeWidget::Step()
   Core::DisplayMessage(tr("Step successful!").toStdString(), 2000);
   // Will get a UpdateDisasmDialog(), don't update the GUI here.
 
-  m_diff_dialog->Update();
+  // TODO: Step doesn't cause EmulationStateChanged to be emitted, so it has to call this manually.
+  m_branch_watch_dialog->Update();
 }
 
 void CodeWidget::StepOver()

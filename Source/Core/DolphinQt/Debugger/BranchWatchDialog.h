@@ -9,7 +9,6 @@
 #include <QDialog>
 
 #include "Core/Core.h"
-#include "DolphinQt/Debugger/CodeWidget.h"
 
 namespace Core
 {
@@ -20,6 +19,7 @@ class System;
 class BranchWatchProxyModel;
 class BranchWatchTableModel;
 class BranchWatchTableView;
+class CodeWidget;
 class QAction;
 class QPushButton;
 class QStatusBar;
@@ -31,18 +31,19 @@ class BranchWatchDialog : public QDialog
 {
   Q_OBJECT
 
-  // TODO: There seems to be a lack of a ubiquitous signal for when symbols change.
-  // This is the best location to catch the signals from MenuBar and CodeViewWidget.
-  friend void CodeWidget::UpdateSymbols();
-  // TODO: Step doesn't cause EmulationStateChanged to be emitted, so it has to call this manually.
-  friend void CodeWidget::Step();
-
 public:
   explicit BranchWatchDialog(Core::System& system, Core::BranchWatch& branch_watch,
                              CodeWidget* code_widget, QWidget* parent = nullptr);
   void done(int r) override;
   int exec() override;
   void open() override;
+
+  // TODO: Step doesn't cause EmulationStateChanged to be emitted, so it has to call this manually.
+  void Update();
+  // TODO: There seems to be a lack of a ubiquitous signal for when symbols change.
+  void UpdateSymbols();
+  // TODO: This is only public because BranchWatchTableView needs access to it. Find a better way.
+  void UpdateStatus();
 
 private:
   [[nodiscard]] QLayout* CreateLayout();
@@ -58,6 +59,7 @@ private:
   void OnBranchWasOverwritten();
   void OnBranchNotOverwritten();
   void OnWipeRecentHits();
+  void OnWipeInspection();
   void OnTimeout();
   void OnEmulationStateChanged(Core::State new_state);
   void OnHelp();
@@ -65,9 +67,6 @@ private:
   void OnHideShowControls(bool checked);
   void OnToggleDestinationSymbols(bool checked);
 
-  void Update();
-  void UpdateSymbols();
-  void UpdateStatus();
   void Save(const Core::CPUThreadGuard& guard, const std::string& filepath);
   void Load(const Core::CPUThreadGuard& guard, const std::string& filepath);
   void AutoSave(const Core::CPUThreadGuard& guard);

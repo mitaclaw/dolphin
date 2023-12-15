@@ -4,11 +4,13 @@
 #include "Core/Debugger/BranchWatch.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdio>
 
 #include <fmt/format.h>
 
 #include "Common/Assert.h"
+#include "Common/BitField.h"
 #include "Common/CommonTypes.h"
 #include "Core/Core.h"
 #include "Core/PowerPC/Gekko.h"
@@ -16,7 +18,7 @@
 
 namespace Core
 {
-void BranchWatch::Clear(const Core::CPUThreadGuard&)
+void BranchWatch::Clear(const CPUThreadGuard&)
 {
   m_selection.clear();
   m_collection_v.clear();
@@ -25,7 +27,30 @@ void BranchWatch::Clear(const Core::CPUThreadGuard&)
   m_blacklist_size = 0;
 }
 
-void BranchWatch::Save(const Core::CPUThreadGuard&, std::FILE* file) const
+union USnapshotMetadata
+{
+  using Inspection = BranchWatch::SelectionInspection;
+  using StorageType = unsigned long long;
+
+  static_assert(Inspection::EndOfEnumeration == (1u << 3) + 1);
+
+  StorageType hex;
+
+  BitField<0, 1, bool, StorageType> is_virtual;
+  BitField<1, 1, bool, StorageType> is_selected;
+  BitField<2, 4, Inspection, StorageType> inspection;
+
+  USnapshotMetadata() : hex(0) {}
+  explicit USnapshotMetadata(bool is_virtual_, bool is_selected_, Inspection inspection_)
+      : USnapshotMetadata()
+  {
+    is_virtual = is_virtual_;
+    is_selected = is_selected_;
+    inspection = inspection_;
+  }
+};
+
+void BranchWatch::Save(const CPUThreadGuard& guard, std::FILE* file) const
 {
   if (!CanSave())
   {
@@ -36,54 +61,64 @@ void BranchWatch::Save(const Core::CPUThreadGuard&, std::FILE* file) const
     return;
 
   for (const Collection::value_type& kv : m_collection_v)
-    fmt::println(file, "{:08x} {:08x} {:08x} {} {} {:d} {:d}", kv.first.origin_addr,
+  {
+    const auto iter = std::find_if(
+        m_selection.begin(), m_selection.end(),
+        [&](const Selection::value_type& value) { return value.collection_ptr == &kv; });
+    fmt::println(file, "{:08x} {:08x} {:08x} {} {} {:x}", kv.first.origin_addr,
                  kv.first.destin_addr, kv.first.original_inst.hex, kv.second.total_hits,
-                 kv.second.hits_snapshot, true, IsCollectedSelected(kv));
+                 kv.second.hits_snapshot,
+                 iter == m_selection.end() ? USnapshotMetadata(true, false, {}).hex :
+                                             USnapshotMetadata(true, true, iter->inspection).hex);
+  }
   for (const Collection::value_type& kv : m_collection_p)
-    fmt::println(file, "{:08x} {:08x} {:08x} {} {} {:d} {:d}", kv.first.origin_addr,
+  {
+    const auto iter = std::find_if(
+        m_selection.begin(), m_selection.end(),
+        [&](const Selection::value_type& value) { return value.collection_ptr == &kv; });
+    fmt::println(file, "{:08x} {:08x} {:08x} {} {} {:x}", kv.first.origin_addr,
                  kv.first.destin_addr, kv.first.original_inst.hex, kv.second.total_hits,
-                 kv.second.hits_snapshot, false, IsCollectedSelected(kv));
+                 kv.second.hits_snapshot,
+                 iter == m_selection.end() ? USnapshotMetadata(false, false, {}).hex :
+                                             USnapshotMetadata(false, true, iter->inspection).hex);
+  }
 }
 
-void BranchWatch::Load(const Core::CPUThreadGuard&, std::FILE* file)
+void BranchWatch::Load(const CPUThreadGuard& guard, std::FILE* file)
 {
   if (file == nullptr)
     return;
 
-  m_selection.clear();
-  m_collection_v.clear();
-  m_collection_p.clear();
-  m_blacklist_size = 0;
+  Clear(guard);
 
-  u32 origin_addr, destin_addr, hex, total_hits, hits_snapshot, is_selected, is_translated;
-  while (std::fscanf(file, "%x %x %x %u %u %u %u", &origin_addr, &destin_addr, &hex, &total_hits,
-                     &hits_snapshot, &is_translated, &is_selected) == 7)
+  u32 origin_addr, destin_addr, inst_hex;
+  std::size_t total_hits, hits_snapshot;
+  USnapshotMetadata snapshot_metadata = {};
+  while (std::fscanf(file, "%x %x %x %zu %zu %llx", &origin_addr, &destin_addr, &inst_hex,
+                     &total_hits, &hits_snapshot, &snapshot_metadata.hex) == 6)
   {
-    auto [kv_iter, emplace_success] = [&]() {
+    const bool is_virtual = snapshot_metadata.is_virtual;
+    const auto [kv_iter, emplace_success] = [&]() {
       // TODO C++20: Parenthesized initialization of aggregates has bad compiler support.
-      if (is_translated != 0)
-      {
-        return m_collection_v.try_emplace({{origin_addr, destin_addr}, hex},
-                                          BranchWatchValue{total_hits, hits_snapshot});
-      }
-      else
-      {
-        return m_collection_p.try_emplace({{origin_addr, destin_addr}, hex},
-                                          BranchWatchValue{total_hits, hits_snapshot});
-      }
+      if (is_virtual)
+        return m_collection_v.try_emplace({{origin_addr, destin_addr}, inst_hex},
+                                          BranchWatchCollectionValue{total_hits, hits_snapshot});
+      return m_collection_p.try_emplace({{origin_addr, destin_addr}, inst_hex},
+                                        BranchWatchCollectionValue{total_hits, hits_snapshot});
     }();
     if (emplace_success)
     {
-      if (is_selected != 0)
-        m_selection.emplace_back(&*kv_iter, is_translated != 0);
+      if (snapshot_metadata.is_selected)
+        m_selection.emplace_back(&*kv_iter, is_virtual, snapshot_metadata.inspection);
       else if (hits_snapshot != 0)
         ++m_blacklist_size;  // This will be very wrong when not in Blacklist mode. That's ok.
     }
   }
-  m_recording_phase = m_selection.empty() ? Phase::Blacklist : Phase::Reduction;
+  if (!m_selection.empty())
+    m_recording_phase = Phase::Reduction;
 }
 
-void BranchWatch::IsolateHasExecuted(const Core::CPUThreadGuard&)
+void BranchWatch::IsolateHasExecuted(const CPUThreadGuard&)
 {
   switch (m_recording_phase)
   {
@@ -104,8 +139,8 @@ void BranchWatch::IsolateHasExecuted(const Core::CPUThreadGuard&)
     m_recording_phase = Phase::Reduction;
     return;
   case Phase::Reduction:
-    std::erase_if(m_selection, [](const Selection::value_type& pair) -> bool {
-      Collection::value_type* const kv = pair.first;
+    std::erase_if(m_selection, [](const Selection::value_type& value) -> bool {
+      Collection::value_type* const kv = value.collection_ptr;
       if (kv->second.total_hits == kv->second.hits_snapshot)
         return true;
       kv->second.hits_snapshot = kv->second.total_hits;
@@ -115,7 +150,7 @@ void BranchWatch::IsolateHasExecuted(const Core::CPUThreadGuard&)
   }
 }
 
-void BranchWatch::IsolateNotExecuted(const Core::CPUThreadGuard&)
+void BranchWatch::IsolateNotExecuted(const CPUThreadGuard&)
 {
   switch (m_recording_phase)
   {
@@ -127,8 +162,8 @@ void BranchWatch::IsolateNotExecuted(const Core::CPUThreadGuard&)
     m_blacklist_size = GetCollectionSize();
     return;
   case Phase::Reduction:
-    std::erase_if(m_selection, [](const Selection::value_type& pair) -> bool {
-      Collection::value_type* const kv = pair.first;
+    std::erase_if(m_selection, [](const Selection::value_type& value) -> bool {
+      Collection::value_type* const kv = value.collection_ptr;
       if (kv->second.total_hits != kv->second.hits_snapshot)
         return true;
       kv->second.hits_snapshot = kv->second.total_hits;
@@ -138,7 +173,7 @@ void BranchWatch::IsolateNotExecuted(const Core::CPUThreadGuard&)
   }
 }
 
-void BranchWatch::IsolateWasOverwritten(const Core::CPUThreadGuard& guard)
+void BranchWatch::IsolateWasOverwritten(const CPUThreadGuard& guard)
 {
   if (Core::GetState() == Core::State::Uninitialized)
   {
@@ -173,20 +208,20 @@ void BranchWatch::IsolateWasOverwritten(const Core::CPUThreadGuard& guard)
       }
     return;
   case Phase::Reduction:
-    std::erase_if(m_selection, [&guard](const Selection::value_type& pair) -> bool {
+    std::erase_if(m_selection, [&guard](const Selection::value_type& value) -> bool {
       const std::optional read_result = PowerPC::MMU::HostTryReadInstruction(
-          guard, pair.first->first.origin_addr,
-          pair.second ? PowerPC::RequestedAddressSpace::Virtual :
-                        PowerPC::RequestedAddressSpace::Physical);
+          guard, value.collection_ptr->first.origin_addr,
+          value.is_virtual ? PowerPC::RequestedAddressSpace::Virtual :
+                             PowerPC::RequestedAddressSpace::Physical);
       if (!read_result.has_value())
         return false;
-      return pair.first->first.original_inst.hex == read_result->value;
+      return value.collection_ptr->first.original_inst.hex == read_result->value;
     });
     return;
   }
 }
 
-void BranchWatch::IsolateNotOverwritten(const Core::CPUThreadGuard& guard)
+void BranchWatch::IsolateNotOverwritten(const CPUThreadGuard& guard)
 {
   if (Core::GetState() == Core::State::Uninitialized)
   {
@@ -219,36 +254,40 @@ void BranchWatch::IsolateNotOverwritten(const Core::CPUThreadGuard& guard)
       }
     return;
   case Phase::Reduction:
-    std::erase_if(m_selection, [&guard](const Selection::value_type& pair) -> bool {
+    std::erase_if(m_selection, [&guard](const Selection::value_type& value) -> bool {
       const std::optional read_result = PowerPC::MMU::HostTryReadInstruction(
-          guard, pair.first->first.origin_addr,
-          pair.second ? PowerPC::RequestedAddressSpace::Virtual :
-                        PowerPC::RequestedAddressSpace::Physical);
+          guard, value.collection_ptr->first.origin_addr,
+          value.is_virtual ? PowerPC::RequestedAddressSpace::Virtual :
+                             PowerPC::RequestedAddressSpace::Physical);
       if (!read_result.has_value())
         return false;
-      return pair.first->first.original_inst.hex != read_result->value;
+      return value.collection_ptr->first.original_inst.hex != read_result->value;
     });
     return;
   }
 }
 
-void BranchWatch::UpdateHitsSnapshot(const Core::CPUThreadGuard& guard)
+void BranchWatch::UpdateHitsSnapshot()
 {
   switch (m_recording_phase)
   {
   case Phase::Reduction:
-    for (Selection::value_type& pair : m_selection)
-      pair.first->second.hits_snapshot = pair.first->second.total_hits;
+    for (Selection::value_type& value : m_selection)
+      value.collection_ptr->second.hits_snapshot = value.collection_ptr->second.total_hits;
     [[fallthrough]];
   case Phase::Blacklist:
     return;
   }
 }
 
-bool BranchWatch::IsCollectedSelected(const Collection::value_type& v) const
+void BranchWatch::ClearSelectionInspection()
 {
-  return std::find_if(m_selection.begin(), m_selection.end(), [&](const Selection::value_type& s) {
-           return s.first == &v;
-         }) != m_selection.end();
+  std::for_each(m_selection.begin(), m_selection.end(),
+                [](Selection::value_type& value) { value.inspection = {}; });
+}
+
+void BranchWatch::SetSelectedInspected(std::size_t idx, SelectionInspection inspection)
+{
+  m_selection[idx].inspection |= inspection;
 }
 }  // namespace Core

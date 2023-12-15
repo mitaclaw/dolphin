@@ -18,6 +18,8 @@ class BranchWatchDialog;
 class BranchWatchTableModel;
 class QGridLayout;
 
+enum BranchWatchTableModelColumn : int;
+
 class BranchWatchProxyModel final : public QSortFilterProxyModel
 {
   Q_OBJECT
@@ -25,6 +27,8 @@ class BranchWatchProxyModel final : public QSortFilterProxyModel
   friend BranchWatchDialog;
 
 public:
+  using Column = BranchWatchTableModelColumn;
+
   explicit BranchWatchProxyModel(const Core::BranchWatch& branch_watch, QObject* parent = nullptr)
       : QSortFilterProxyModel(parent), m_branch_watch(branch_watch)
   {
@@ -46,7 +50,7 @@ public:
   template <std::optional<u32> BranchWatchProxyModel::*member>
   void OnAddressTextChanged(const QString& text)
   {
-    bool ok;
+    bool ok = false;
     if (const u32 value = text.toUInt(&ok, 16); ok)
       this->*member = value;
     else
@@ -57,6 +61,7 @@ public:
   void OnDelete(QModelIndexList index_list);
 
   bool IsBranchFiltered(u32 hex) const;
+  void SetInspected(const QModelIndex& index);
 
 private:
   const Core::BranchWatch& m_branch_watch;

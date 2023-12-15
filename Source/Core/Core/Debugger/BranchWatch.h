@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <functional>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -21,16 +22,16 @@ class CPUThreadGuard;
 
 namespace Core
 {
-struct FakeBranchWatchKey
+struct FakeBranchWatchCollectionKey
 {
   u32 origin_addr;
   u32 destin_addr;
 };
-struct BranchWatchKey : FakeBranchWatchKey
+struct BranchWatchCollectionKey : FakeBranchWatchCollectionKey
 {
   UGeckoInstruction original_inst;
 };
-struct BranchWatchValue
+struct BranchWatchCollectionValue
 {
   std::size_t total_hits = 0;
   std::size_t hits_snapshot = 0;
@@ -38,46 +39,102 @@ struct BranchWatchValue
 }  // namespace Core
 
 template <>
-struct std::hash<Core::BranchWatchKey>
+struct std::hash<Core::BranchWatchCollectionKey>
 {
-  std::size_t operator()(const Core::BranchWatchKey& s) const noexcept
+  std::size_t operator()(const Core::BranchWatchCollectionKey& s) const noexcept
   {
-    return std::hash<u64>{}(Common::BitCast<u64>(static_cast<const Core::FakeBranchWatchKey&>(s)));
+    return std::hash<u64>{}(
+        Common::BitCast<u64>(static_cast<const Core::FakeBranchWatchCollectionKey&>(s)));
   }
 };
 
 namespace Core
 {
-inline bool operator==(const BranchWatchKey& lhs, const BranchWatchKey& rhs) noexcept
+inline bool operator==(const BranchWatchCollectionKey& lhs,
+                       const BranchWatchCollectionKey& rhs) noexcept
 {
-  std::hash<BranchWatchKey> hash;
+  std::hash<BranchWatchCollectionKey> hash;
   return hash(lhs) == hash(rhs) && lhs.original_inst.hex == rhs.original_inst.hex;
 }
+
+enum BranchWatchSelectionInspection : unsigned char
+{
+  SetOriginNOP = 1u << 0,
+  SetDestinBLR = 1u << 1,
+  SetOriginSymbolBLR = 1u << 2,
+  SetDestinSymbolBLR = 1u << 3,
+  EndOfEnumeration,
+};
+
+constexpr BranchWatchSelectionInspection operator|(BranchWatchSelectionInspection lhs,
+                                                   BranchWatchSelectionInspection rhs)
+{
+  using underlying_t = std::underlying_type_t<BranchWatchSelectionInspection>;
+  return static_cast<BranchWatchSelectionInspection>(static_cast<underlying_t>(lhs) |
+                                                     static_cast<underlying_t>(rhs));
+}
+
+constexpr BranchWatchSelectionInspection operator&(BranchWatchSelectionInspection lhs,
+                                                   BranchWatchSelectionInspection rhs)
+{
+  using underlying_t = std::underlying_type_t<BranchWatchSelectionInspection>;
+  return static_cast<BranchWatchSelectionInspection>(static_cast<underlying_t>(lhs) &
+                                                     static_cast<underlying_t>(rhs));
+}
+
+constexpr BranchWatchSelectionInspection& operator|=(BranchWatchSelectionInspection& self,
+                                                     BranchWatchSelectionInspection other)
+{
+  return self = self | other;
+}
+
+class BranchWatchCollection final
+    : public std::unordered_map<BranchWatchCollectionKey, BranchWatchCollectionValue>
+{
+};
+
+struct BranchWatchSelectionValueType
+{
+  using Inspection = BranchWatchSelectionInspection;
+
+  BranchWatchCollection::value_type* collection_ptr;
+  bool is_virtual;
+  // This is moreso a GUI thing, but it works best in the Core code for multiple reasons.
+  Inspection inspection;
+};
+
+class BranchWatchSelection final : public std::vector<BranchWatchSelectionValueType>
+{
+};
+
+enum class BranchWatchPhase : bool
+{
+  Blacklist,
+  Reduction,
+};
 
 class BranchWatch
 {
 public:
-  enum class Phase : bool
-  {
-    Blacklist,
-    Reduction,
-  };
-
-  using Collection = std::unordered_map<BranchWatchKey, BranchWatchValue>;
-  using Selection = std::vector<std::pair<Collection::value_type*, bool>>;
+  using Collection = BranchWatchCollection;
+  using Selection = BranchWatchSelection;
+  using Phase = BranchWatchPhase;
+  using SelectionInspection = BranchWatchSelectionInspection;
 
   void Start() { m_recording_active = true; }
   void Pause() { m_recording_active = false; }
-  void Clear(const Core::CPUThreadGuard& guard);
+  void Clear(const CPUThreadGuard& guard);
 
-  void Save(const Core::CPUThreadGuard& guard, std::FILE* file) const;
-  void Load(const Core::CPUThreadGuard& guard, std::FILE* file);
+  void Save(const CPUThreadGuard& guard, std::FILE* file) const;
+  void Load(const CPUThreadGuard& guard, std::FILE* file);
 
-  void IsolateHasExecuted(const Core::CPUThreadGuard& guard);
-  void IsolateNotExecuted(const Core::CPUThreadGuard& guard);
-  void IsolateWasOverwritten(const Core::CPUThreadGuard& guard);
-  void IsolateNotOverwritten(const Core::CPUThreadGuard& guard);
-  void UpdateHitsSnapshot(const Core::CPUThreadGuard& guard);
+  void IsolateHasExecuted(const CPUThreadGuard& guard);
+  void IsolateNotExecuted(const CPUThreadGuard& guard);
+  void IsolateWasOverwritten(const CPUThreadGuard& guard);
+  void IsolateNotOverwritten(const CPUThreadGuard& guard);
+  void UpdateHitsSnapshot();
+  void ClearSelectionInspection();
+  void SetSelectedInspected(std::size_t idx, SelectionInspection inspection);
 
   Selection& GetSelection() { return m_selection; }
   const Selection& GetSelection() const { return m_selection; }
@@ -112,13 +169,15 @@ public:
   static void HitV_n(BranchWatch* branch_watch, u64 fk, u32 inst, u32 n)
   {
     // This std::bit_cast trick is necessitated by fastcall ABI limitations in the JIT on Windows.
-    branch_watch->m_collection_v[{Common::BitCast<FakeBranchWatchKey>(fk), inst}].total_hits += n;
+    branch_watch->m_collection_v[{Common::BitCast<FakeBranchWatchCollectionKey>(fk), inst}]
+        .total_hits += n;
   }
 
   static void HitP_n(BranchWatch* branch_watch, u64 fk, u32 inst, u32 n)
   {
     // This std::bit_cast trick is necessitated by fastcall ABI limitations in the JIT on Windows.
-    branch_watch->m_collection_p[{Common::BitCast<FakeBranchWatchKey>(fk), inst}].total_hits += n;
+    branch_watch->m_collection_p[{Common::BitCast<FakeBranchWatchCollectionKey>(fk), inst}]
+        .total_hits += n;
   }
 
   // The JIT needs this value, but doesn't need to be a full-on friend.
@@ -128,8 +187,6 @@ public:
   }
 
 private:
-  bool IsCollectedSelected(const Collection::value_type& v) const;
-
   Collection m_collection_v;  // Virtual memory
   Collection m_collection_p;  // Physical memory
   Selection m_selection;

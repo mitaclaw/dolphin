@@ -315,6 +315,14 @@ protected:
   void MSRUpdated(u32 msr);
   void MSRUpdated(Arm64Gen::ARM64Reg msr);
 
+  // Branch Watch
+  void WriteBranchWatch(u32 origin, u32 destination, UGeckoInstruction inst, BitSet32 gprs_in_use,
+                        BitSet32 fprs_in_use);
+  void WriteBranchWatchDestInScratch(u32 origin, Arm64Gen::ARM64Reg destination,
+                                     UGeckoInstruction inst);
+  void WriteBranchWatch_dcbx(u32 origin, u32 destination, UGeckoInstruction inst,
+                             Arm64Gen::ARM64Reg n, BitSet32 gprs_in_use, BitSet32 fprs_in_use);
+
   // Exits
   void
   WriteExit(u32 destination, bool LK = false, u32 exit_address_after_return = 0,

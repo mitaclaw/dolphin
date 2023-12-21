@@ -7,12 +7,14 @@
 
 #include "Common/Arm64Emitter.h"
 #include "Common/BitSet.h"
+#include "Common/BitUtils.h"
 #include "Common/CommonTypes.h"
 #include "Common/ScopeGuard.h"
 
 #include "Core/ConfigManager.h"
 #include "Core/Core.h"
 #include "Core/CoreTiming.h"
+#include "Core/Debugger/BranchWatch.h"
 #include "Core/HW/DSP.h"
 #include "Core/HW/MMIO.h"
 #include "Core/HW/Memmap.h"
@@ -751,6 +753,31 @@ void JitArm64::stmw(UGeckoInstruction inst)
     gpr.Unlock(addr_base_reg);
 }
 
+void JitArm64::WriteBranchWatch_dcbx(u32 origin, u32 destination, UGeckoInstruction inst,
+                                     Arm64Gen::ARM64Reg n, BitSet32 gprs_in_use,
+                                     BitSet32 fprs_in_use)
+{
+  // It's impossible to do the ARM64Reg::X0 move skip optimization that JitArm64::WriteBranchWatch
+  // does, because n will be in ARM64Reg::W0 in the context of JitArm64::dcbx!
+  const ARM64Reg WA = gpr.GetReg(), branch_watch = EncodeRegTo64(WA);
+  const ARM64Reg WB = gpr.GetReg();
+  MOVP2R(branch_watch, &m_branch_watch);
+  LDRB(IndexType::Unsigned, WB, branch_watch,
+       static_cast<int>(Core::BranchWatch::GetOffsetOfRecordingActive()));
+  FixupBranch branch = TBNZ(WB, true);
+  ABI_PushRegisters(gprs_in_use);
+  m_float_emit.ABI_PushRegisters(fprs_in_use, WA);
+  ABI_CallFunction(
+      m_ppc_state.msr.IR ? &Core::BranchWatch::HitV_fk_n : &Core::BranchWatch::HitP_fk_n,
+      branch_watch, Common::BitCast<u64>(Core::FakeBranchWatchCollectionKey{origin, destination}),
+      inst.hex, n);
+  ABI_PopRegisters(gprs_in_use);
+  m_float_emit.ABI_PopRegisters(fprs_in_use, WB);
+  gpr.Unlock(WA);
+  gpr.Unlock(WB);
+  SetJumpTarget(branch);
+}
+
 void JitArm64::dcbx(UGeckoInstruction inst)
 {
   FALLBACK_IF(m_accurate_cpu_cache_enabled);
@@ -829,6 +856,13 @@ void JitArm64::dcbx(UGeckoInstruction inst)
     ADD(loop_counter, WA, 1);
 
     gpr.Unlock(reg_cycle_count, reg_downcount);
+
+    if (m_enable_debugging)
+    {
+      const auto& op = js.op[2];
+      WriteBranchWatch_dcbx(op.address, op.branchTo, op.inst, WA, gpr.GetCallerSavedUsed(),
+                            fpr.GetCallerSavedUsed());
+    }
   }
 
   ARM64Reg effective_addr = ARM64Reg::W1;

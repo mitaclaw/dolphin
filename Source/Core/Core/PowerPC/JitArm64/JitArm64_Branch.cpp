@@ -4,10 +4,12 @@
 #include "Core/PowerPC/JitArm64/Jit.h"
 
 #include "Common/Arm64Emitter.h"
+#include "Common/BitUtils.h"
 #include "Common/CommonTypes.h"
 
 #include "Core/Core.h"
 #include "Core/CoreTiming.h"
+#include "Core/Debugger/BranchWatch.h"
 #include "Core/PowerPC/JitArm64/JitArm64_RegCache.h"
 #include "Core/PowerPC/PPCTables.h"
 #include "Core/PowerPC/PowerPC.h"
@@ -74,6 +76,51 @@ void JitArm64::rfi(UGeckoInstruction inst)
   gpr.Unlock(WA);
 }
 
+void JitArm64::WriteBranchWatch(u32 origin, u32 destination, UGeckoInstruction inst,
+                                BitSet32 gprs_in_use, BitSet32 fprs_in_use)
+{
+  // Use ARM64Reg::X0 as a temporary to avoid moving it later in ABI_CallFunction.
+  static constexpr ARM64Reg branch_watch = ARM64Reg::X0;
+  gpr.Lock(EncodeRegTo32(branch_watch));
+
+  MOVP2R(branch_watch, &m_branch_watch);
+  const ARM64Reg WA = gpr.GetReg();
+  LDRB(IndexType::Unsigned, WA, branch_watch,
+       static_cast<int>(Core::BranchWatch::GetOffsetOfRecordingActive()));
+  FixupBranch branch = TBNZ(WA, true);
+  ABI_PushRegisters(gprs_in_use);
+  m_float_emit.ABI_PushRegisters(fprs_in_use, WA);
+  ABI_CallFunction(
+      m_ppc_state.msr.IR ? &Core::BranchWatch::HitV_fk : &Core::BranchWatch::HitP_fk, branch_watch,
+      Common::BitCast<u64>(Core::FakeBranchWatchCollectionKey{origin, destination}), inst.hex);
+  ABI_PopRegisters(gprs_in_use);
+  m_float_emit.ABI_PushRegisters(fprs_in_use, WA);
+  gpr.Unlock(WA);
+  gpr.Unlock(EncodeRegTo32(branch_watch));
+  SetJumpTarget(branch);
+}
+
+void JitArm64::WriteBranchWatchDestInScratch(u32 origin, Arm64Gen::ARM64Reg destination,
+                                             UGeckoInstruction inst)
+{
+  // Use ARM64Reg::X0 as a temporary to avoid moving it later in ABI_CallFunction.
+  static constexpr ARM64Reg branch_watch = ARM64Reg::X0;
+  gpr.Lock(EncodeRegTo32(branch_watch));
+  // Make sure destination register won't be clobbered.
+  ASSERT(EncodeRegTo32(branch_watch) != destination);
+
+  MOVP2R(branch_watch, &m_branch_watch);
+  const ARM64Reg WA = gpr.GetReg();
+  LDRB(IndexType::Unsigned, WA, branch_watch,
+       static_cast<int>(Core::BranchWatch::GetOffsetOfRecordingActive()));
+  FixupBranch branch = TBNZ(WA, true);
+  gpr.Unlock(WA);
+  ABI_CallFunction(m_ppc_state.msr.IR ? &Core::BranchWatch::HitV : &Core::BranchWatch::HitP,
+                   branch_watch, origin, destination, inst.hex);
+  gpr.Unlock(EncodeRegTo32(branch_watch));
+  SetJumpTarget(branch);
+}
+
 void JitArm64::bx(UGeckoInstruction inst)
 {
   INSTRUCTION_START
@@ -89,6 +136,12 @@ void JitArm64::bx(UGeckoInstruction inst)
 
   if (!js.isLastInstruction)
   {
+    if (m_enable_debugging)
+    {
+      WriteBranchWatch(js.compilerPC, js.op->branchTo, inst, gpr.GetCallerSavedUsed(),
+                       fpr.GetCallerSavedUsed());
+    }
+
     if (inst.LK && !js.op->skipLRStack)
     {
       // We have to fake the stack as the RET instruction was not
@@ -105,6 +158,9 @@ void JitArm64::bx(UGeckoInstruction inst)
 
   gpr.Flush(FlushMode::All, ARM64Reg::INVALID_REG);
   fpr.Flush(FlushMode::All, ARM64Reg::INVALID_REG);
+
+  if (m_enable_debugging)
+    WriteBranchWatch(js.compilerPC, js.op->branchTo, inst, {}, {});
 
   if (js.op->branchIsIdleLoop)
   {
@@ -165,6 +221,9 @@ void JitArm64::bcx(UGeckoInstruction inst)
 
   gpr.Flush(FlushMode::MaintainState, WB);
   fpr.Flush(FlushMode::MaintainState, ARM64Reg::INVALID_REG);
+
+  if (m_enable_debugging)
+    WriteBranchWatch(js.compilerPC, js.op->branchTo, inst, {}, {});
 
   if (js.op->branchIsIdleLoop)
   {
@@ -231,6 +290,9 @@ void JitArm64::bcctrx(UGeckoInstruction inst)
   LDR(IndexType::Unsigned, WA, PPC_REG, PPCSTATE_OFF_SPR(SPR_CTR));
   AND(WA, WA, LogicalImm(~0x3, GPRSize::B32));
 
+  if (m_enable_debugging)
+    WriteBranchWatchDestInScratch(js.compilerPC, WA, inst);
+
   WriteExit(WA, inst.LK_3, js.compilerPC + 4, inst.LK_3 ? WB : ARM64Reg::INVALID_REG);
 
   if (WB != ARM64Reg::INVALID_REG)
@@ -280,6 +342,9 @@ void JitArm64::bclrx(UGeckoInstruction inst)
 
   gpr.Flush(conditional ? FlushMode::MaintainState : FlushMode::All, WB);
   fpr.Flush(conditional ? FlushMode::MaintainState : FlushMode::All, ARM64Reg::INVALID_REG);
+
+  if (m_enable_debugging)
+    WriteBranchWatchDestInScratch(js.compilerPC, WA, inst);
 
   if (js.op->branchIsIdleLoop)
   {

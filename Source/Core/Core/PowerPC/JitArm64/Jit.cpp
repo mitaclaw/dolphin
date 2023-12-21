@@ -1181,7 +1181,18 @@ bool JitArm64::DoJit(u32 em_address, JitBlock* b, u32 nextPC)
     if (HandleFunctionHooking(op.address))
       break;
 
-    if (!op.skip)
+    if (op.skip)
+    {
+      if (m_enable_debugging)
+      {
+        // The only thing that currently sets op.skip is the BLR following optimization.
+        // If any non-branch instruction starts settings that too, this will need changed.
+        ASSERT(op.inst.hex == 0x4e800020);
+        WriteBranchWatch(op.address, op.branchTo, op.inst, gpr.GetCallerSavedUsed(),
+                         fpr.GetCallerSavedUsed());
+      }
+    }
+    else
     {
       if ((opinfo->flags & FL_USE_FPU) && !js.firstFPInstructionFound)
       {

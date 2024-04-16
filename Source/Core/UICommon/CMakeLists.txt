@@ -3,8 +3,6 @@ add_library(uicommon
   AutoUpdate.h
   CommandLineParse.cpp
   CommandLineParse.h
-  Disassembler.cpp
-  Disassembler.h
   DiscordPresence.cpp
   DiscordPresence.h
   GameFile.cpp
@@ -37,11 +35,6 @@ PRIVATE
   $<$<BOOL:APPLE>:${IOK_LIBRARY}>
 )
 
-if ((DEFINED CMAKE_ANDROID_ARCH_ABI AND CMAKE_ANDROID_ARCH_ABI MATCHES "x86|x86_64") OR
-    (NOT DEFINED CMAKE_ANDROID_ARCH_ABI AND _M_X86_64))
-  target_link_libraries(uicommon PRIVATE bdisasm)
-endif()
-
 if(ENABLE_X11 AND X11_FOUND)
   target_include_directories(uicommon PRIVATE ${X11_INCLUDE_DIR})
   target_sources(uicommon PRIVATE X11Utils.cpp)
@@ -50,16 +43,6 @@ endif()
 
 if(TARGET LibUSB::LibUSB)
   target_link_libraries(uicommon PRIVATE LibUSB::LibUSB)
-endif()
-
-if(ENABLE_LLVM)
-  find_package(LLVM CONFIG QUIET)
-  if(LLVM_FOUND AND TARGET LLVM)
-    message(STATUS "LLVM found, enabling LLVM support in disassembler")
-    target_compile_definitions(uicommon PRIVATE HAVE_LLVM)
-    target_link_libraries(uicommon PRIVATE LLVM)
-    target_include_directories(uicommon PRIVATE ${LLVM_INCLUDE_DIRS})
-  endif()
 endif()
 
 if(USE_DISCORD_PRESENCE)

@@ -75,6 +75,8 @@ add_library(common
   Hash.cpp
   Hash.h
   HookableEvent.h
+  HostDisassembler.cpp
+  HostDisassembler.h
   HttpRequest.cpp
   HttpRequest.h
   Image.cpp
@@ -142,6 +144,7 @@ add_library(common
   TraversalClient.h
   TraversalProto.h
   TypeUtils.h
+  Unreachable.h
   UPnP.cpp
   UPnP.h
   VariantUtil.h
@@ -176,6 +179,11 @@ PRIVATE
   spng::spng
   ${VTUNE_LIBRARIES}
 )
+
+if ((DEFINED CMAKE_ANDROID_ARCH_ABI AND CMAKE_ANDROID_ARCH_ABI MATCHES "x86|x86_64") OR
+    (NOT DEFINED CMAKE_ANDROID_ARCH_ABI AND _M_X86_64))
+  target_link_libraries(common PRIVATE bdisasm)
+endif()
 
 if (APPLE)
   target_link_libraries(common
@@ -325,6 +333,16 @@ endif()
 
 if(OPROFILE_FOUND)
   target_link_libraries(common PRIVATE OProfile::OProfile)
+endif()
+
+if(ENABLE_LLVM)
+  find_package(LLVM CONFIG QUIET)
+  if(LLVM_FOUND AND TARGET LLVM)
+    message(STATUS "LLVM found, enabling LLVM support in disassembler")
+    target_compile_definitions(common PRIVATE HAVE_LLVM)
+    target_link_libraries(common PRIVATE LLVM)
+    target_include_directories(common PRIVATE ${LLVM_INCLUDE_DIRS})
+  endif()
 endif()
 
 if(UNIX)

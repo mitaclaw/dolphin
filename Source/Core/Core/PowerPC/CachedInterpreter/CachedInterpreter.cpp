@@ -3,7 +3,15 @@
 
 #include "Core/PowerPC/CachedInterpreter/CachedInterpreter.h"
 
+#include <span>
+#include <sstream>
+#include <utility>
+
+#include <fmt/format.h>
+#include <fmt/ostream.h>
+
 #include "Common/CommonTypes.h"
+#include "Common/GekkoDisassembler.h"
 #include "Common/Logging/Log.h"
 #include "Core/ConfigManager.h"
 #include "Core/CoreTiming.h"
@@ -386,10 +394,100 @@ void CachedInterpreter::Jit(u32 address)
   b->far_begin = nullptr;
   b->far_end = nullptr;
 
-  b->codeSize = static_cast<u32>(GetCodePtr() - b->normalEntry);
-  b->originalSize = code_block.m_num_instructions;
+  m_block_cache.FinalizeBlock(*b, jo.enableBlocklink, code_block, m_code_buffer);
 
-  m_block_cache.FinalizeBlock(*b, jo.enableBlocklink, code_block.m_physical_addresses);
+#ifdef JIT_LOG_GENERATED_CODE
+  LogGeneratedCode();
+#endif
+}
+
+void CachedInterpreter::EraseSingleBlock(const JitBlock& block)
+{
+  m_block_cache.EraseSingleBlock(block);
+}
+
+void CachedInterpreter::DisasmNearCode(const JitBlock& block, std::ostream& stream,
+                                       std::size_t& instruction_count) const
+{
+  u32 em_address = block.effectiveAddress;
+  for (const Instruction* code = reinterpret_cast<const Instruction*>(block.normalEntry);; ++code)
+  {
+    switch (code->type)
+    {
+    case Instruction::Type::Abort:
+      instruction_count = code - reinterpret_cast<const Instruction*>(block.normalEntry);
+      return;
+    case Instruction::Type::Common:
+    case Instruction::Type::Conditional:
+      ASSERT_MSG(DYNA_REC, false, "Previously unused code types are not accounted for");
+      continue;
+    case Instruction::Type::Interpreter:
+    {
+      if (code->interpreter_callback == Interpreter::HLEFunction)
+      {
+        fmt::println(stream, "Interpreter::HLEFunction(\"{}\")",
+                     HLE::GetHookNameByIndex(code->data));
+        continue;
+      }
+      fmt::println(stream, "0x{:08x} {}", em_address,
+                   Common::GekkoDisassembler::Disassemble(code->data, em_address));
+      em_address += 4;
+      continue;
+    }
+    case Instruction::Type::CachedInterpreter:
+    {
+      const auto& callback = code->cached_interpreter_callback;
+      if (callback == WritePC)
+        fmt::println(stream, "WritePC(0x{:08x})", code->data);
+      else if (callback == WriteBrokenBlockNPC)
+        fmt::println(stream, "WriteBrokenBlockNPC(0x{:08x})", code->data);
+      else if (callback == UpdateNumLoadStoreInstructions)
+        fmt::println(stream, "UpdateNumLoadStoreInstructions({})", code->data);
+      else if (callback == UpdateNumFloatingPointInstructions)
+        fmt::println(stream, "UpdateNumFloatingPointInstructions({})", code->data);
+      else if (callback == EndBlock)
+        fmt::println(stream, "EndBlock(downcount={})", code->data);
+      else
+        ASSERT_MSG(DYNA_REC, false, "Unknown callback");
+      continue;
+    }
+    case Instruction::Type::ConditionalCachedInterpreter:
+    {
+      const auto& callback = code->conditional_cached_interpreter_callback;
+      if (callback == CheckIdle)
+        fmt::println(stream, "CheckIdle(0x{:08x})", code->data);
+      else if (callback == CheckBreakpoint)
+        fmt::println(stream, "CheckBreakpoint(downcount={})", code->data);
+      else if (callback == CheckFPU)
+        fmt::println(stream, "CheckFPU(downcount={})", code->data);
+      else if (callback == CheckDSI)
+        fmt::println(stream, "CheckDSI(downcount={})", code->data);
+      else if (callback == CheckProgramException)
+        fmt::println(stream, "CheckProgramException(downcount={})", code->data);
+      else
+        ASSERT_MSG(DYNA_REC, false, "Unknown callback");
+      continue;
+    }
+    }
+    ASSERT_MSG(DYNA_REC, false, "Invalid code type");
+  }
+}
+
+void CachedInterpreter::DisasmFarCode(const JitBlock& block, std::ostream& stream,
+                                      std::size_t& instruction_count) const
+{
+  instruction_count = 0;
+  stream << "N/A\n";
+}
+
+std::pair<std::size_t, double> CachedInterpreter::GetNearMemoryInfo() const
+{
+  return {(m_code.capacity() - m_code.size()) * sizeof(Instruction), 0.0};
+}
+
+std::pair<std::size_t, double> CachedInterpreter::GetFarMemoryInfo() const
+{
+  return {0, 0.0};
 }
 
 void CachedInterpreter::ClearCache()
@@ -397,4 +495,25 @@ void CachedInterpreter::ClearCache()
   m_code.clear();
   m_block_cache.Clear();
   RefreshConfig();
+  JitBase::ClearCache();
+}
+
+void CachedInterpreter::LogGeneratedCode() const
+{
+  std::ostringstream stream;
+
+  stream << "\nPPC Code Buffer:\n";
+  for (const PPCAnalyst::CodeOp& op :
+       std::span{m_code_buffer.data(), code_block.m_num_instructions})
+  {
+    fmt::print(stream, "0x{:08x}\t\t{}\n", op.address,
+               Common::GekkoDisassembler::Disassemble(op.inst.hex, op.address));
+  }
+
+  std::size_t dummy;
+  stream << "\nHost Code:\n";
+  DisasmNearCode(*js.curBlock, stream, dummy);
+
+  // TODO C++20: std::ostringstream::view()
+  DEBUG_LOG_FMT(DYNA_REC, "{}", std::move(stream).str());
 }

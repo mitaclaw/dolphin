@@ -40,6 +40,11 @@ public:
   // JitBase methods
   JitBaseBlockCache* GetBlockCache() override { return nullptr; }
   void Jit(u32 em_address) override {}
+  void EraseSingleBlock(const JitBlock& block) override {}
+  void DisasmNearCode(const JitBlock&, std::ostream& stream, std::size_t&) const override {}
+  void DisasmFarCode(const JitBlock&, std::ostream& stream, std::size_t&) const override {}
+  std::pair<std::size_t, double> GetNearMemoryInfo() const override { return {}; }
+  std::pair<std::size_t, double> GetFarMemoryInfo() const override { return {}; }
   const CommonAsmRoutinesBase* GetAsmRoutines() override { return nullptr; }
   virtual bool HandleFault(uintptr_t access_address, SContext* ctx) override
   {

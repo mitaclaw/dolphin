@@ -31,6 +31,14 @@ public:
 
   void Jit(u32 address) override;
 
+  void EraseSingleBlock(const JitBlock& block) override;
+  void DisasmNearCode(const JitBlock& block, std::ostream& stream,
+                      std::size_t& instruction_count) const override;
+  void DisasmFarCode(const JitBlock& block, std::ostream& stream,
+                     std::size_t& instruction_count) const override;
+  std::pair<std::size_t, double> GetNearMemoryInfo() const override;
+  std::pair<std::size_t, double> GetFarMemoryInfo() const override;
+
   JitBaseBlockCache* GetBlockCache() override { return &m_block_cache; }
   const char* GetName() const override { return "Cached Interpreter"; }
   const CommonAsmRoutinesBase* GetAsmRoutines() override { return nullptr; }
@@ -42,6 +50,8 @@ private:
   void ExecuteOneBlock();
 
   bool HandleFunctionHooking(u32 address);
+
+  void LogGeneratedCode() const;
 
   static void EndBlock(CachedInterpreter& cached_interpreter, UGeckoInstruction data);
   static void UpdateNumLoadStoreInstructions(CachedInterpreter& cached_interpreter,

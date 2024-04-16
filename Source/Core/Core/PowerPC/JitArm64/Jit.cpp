@@ -4,9 +4,16 @@
 #include "Core/PowerPC/JitArm64/Jit.h"
 
 #include <cstdio>
+#include <span>
+#include <sstream>
+
+#include <fmt/format.h>
+#include <fmt/ostream.h>
 
 #include "Common/Arm64Emitter.h"
 #include "Common/CommonTypes.h"
+#include "Common/GekkoDisassembler.h"
+#include "Common/HostDisassembler.h"
 #include "Common/Logging/Log.h"
 #include "Common/MathUtil.h"
 #include "Common/MsgHandler.h"
@@ -37,7 +44,9 @@ constexpr size_t CODE_SIZE = 1024 * 1024 * 32;
 constexpr size_t FARCODE_SIZE = 1024 * 1024 * 64;
 constexpr size_t FARCODE_SIZE_MMU = 1024 * 1024 * 64;
 
-JitArm64::JitArm64(Core::System& system) : JitBase(system), m_float_emit(this)
+JitArm64::JitArm64(Core::System& system)
+    : JitBase(system), m_float_emit(this),
+      m_disassembler(HostDisassembler::Factory(HostDisassembler::Platform::aarch64))
 {
 }
 
@@ -160,6 +169,30 @@ void JitArm64::ClearCache()
   GenerateAsm();
 
   ResetFreeMemoryRanges();
+
+  JitBase::ClearCache();
+}
+
+void JitArm64::FreeRanges()
+{
+  // Check if any code blocks have been freed in the block cache and transfer this information to
+  // the local rangesets to allow overwriting them with new code.
+  for (auto range : blocks.GetRangesToFreeNear())
+  {
+    auto first_fastmem_area = m_fault_to_handler.upper_bound(range.first);
+    auto last_fastmem_area = first_fastmem_area;
+    auto end = m_fault_to_handler.end();
+    while (last_fastmem_area != end && last_fastmem_area->first <= range.second)
+      ++last_fastmem_area;
+    m_fault_to_handler.erase(first_fastmem_area, last_fastmem_area);
+
+    m_free_ranges_near.insert(range.first, range.second);
+  }
+  for (auto range : blocks.GetRangesToFreeFar())
+  {
+    m_free_ranges_far.insert(range.first, range.second);
+  }
+  blocks.ClearRangesToFree();
 }
 
 void JitArm64::ResetFreeMemoryRanges()
@@ -877,25 +910,7 @@ void JitArm64::Jit(u32 em_address, bool clear_cache_and_retry_on_failure)
 
   if (SConfig::GetInstance().bJITNoBlockCache)
     ClearCache();
-
-  // Check if any code blocks have been freed in the block cache and transfer this information to
-  // the local rangesets to allow overwriting them with new code.
-  for (auto range : blocks.GetRangesToFreeNear())
-  {
-    auto first_fastmem_area = m_fault_to_handler.upper_bound(range.first);
-    auto last_fastmem_area = first_fastmem_area;
-    auto end = m_fault_to_handler.end();
-    while (last_fastmem_area != end && last_fastmem_area->first <= range.second)
-      ++last_fastmem_area;
-    m_fault_to_handler.erase(first_fastmem_area, last_fastmem_area);
-
-    m_free_ranges_near.insert(range.first, range.second);
-  }
-  for (auto range : blocks.GetRangesToFreeFar())
-  {
-    m_free_ranges_far.insert(range.first, range.second);
-  }
-  blocks.ClearRangesToFree();
+  FreeRanges();
 
   const Common::ScopedJITPageWriteAndNoExecute enable_jit_page_writes;
 
@@ -964,7 +979,11 @@ void JitArm64::Jit(u32 em_address, bool clear_cache_and_retry_on_failure)
       b->far_begin = far_start;
       b->far_end = far_end;
 
-      blocks.FinalizeBlock(*b, jo.enableBlocklink, code_block.m_physical_addresses);
+      blocks.FinalizeBlock(*b, jo.enableBlocklink, code_block, m_code_buffer);
+
+#ifdef JIT_LOG_GENERATED_CODE
+      LogGeneratedCode();
+#endif
       return;
     }
   }
@@ -983,6 +1002,48 @@ void JitArm64::Jit(u32 em_address, bool clear_cache_and_retry_on_failure)
       "JIT failed to find code space after a cache clear. This should never happen. Please "
       "report this incident on the bug tracker. Dolphin will now exit.");
   exit(-1);
+}
+
+void JitArm64::EraseSingleBlock(const JitBlock& block)
+{
+  blocks.EraseSingleBlock(block);
+  FreeRanges();
+}
+
+void JitArm64::DisasmNearCode(const JitBlock& block, std::ostream& stream,
+                              std::size_t& instruction_count) const
+{
+  return m_disassembler->Disassemble(block.normalEntry, block.near_end, stream, instruction_count);
+}
+
+void JitArm64::DisasmFarCode(const JitBlock& block, std::ostream& stream,
+                             std::size_t& instruction_count) const
+{
+  return m_disassembler->Disassemble(block.far_begin, block.far_end, stream, instruction_count);
+}
+
+static std::pair<std::size_t, double>
+GetFreeMemoryInfo(const HyoutaUtilities::RangeSizeSet<u8*>::by_size_const_iterator begin,
+                  const HyoutaUtilities::RangeSizeSet<u8*>::by_size_const_iterator end)
+{
+  if (begin == end)
+    return {0, 1.0};
+
+  std::size_t free_total = 0;
+  for (auto iter = begin; iter != end; ++iter)
+    free_total += iter.to() - iter.from();
+  const std::size_t free_max = begin.to() - begin.from();
+  return {free_total, static_cast<double>(free_total - free_max) / free_total};
+}
+
+std::pair<std::size_t, double> JitArm64::GetNearMemoryInfo() const
+{
+  return GetFreeMemoryInfo(m_free_ranges_near.by_size_begin(), m_free_ranges_near.by_size_end());
+}
+
+std::pair<std::size_t, double> JitArm64::GetFarMemoryInfo() const
+{
+  return GetFreeMemoryInfo(m_free_ranges_far.by_size_begin(), m_free_ranges_far.by_size_end());
 }
 
 bool JitArm64::SetEmitterStateToFreeCodeRegion()
@@ -1283,11 +1344,30 @@ bool JitArm64::DoJit(u32 em_address, JitBlock* b, u32 nextPC)
     return false;
   }
 
-  b->codeSize = static_cast<u32>(GetCodePtr() - b->normalEntry);
-  b->originalSize = code_block.m_num_instructions;
-
   FlushIcache();
   m_far_code.FlushIcache();
 
   return true;
+}
+
+void JitArm64::LogGeneratedCode() const
+{
+  std::ostringstream stream;
+
+  stream << "\nPPC Code Buffer:\n";
+  for (const PPCAnalyst::CodeOp& op :
+       std::span{m_code_buffer.data(), code_block.m_num_instructions})
+  {
+    fmt::print(stream, "0x{:08x}\t\t{}\n", op.address,
+               Common::GekkoDisassembler::Disassemble(op.inst.hex, op.address));
+  }
+
+  const JitBlock* const block = js.curBlock;
+  stream << "\nHost Near Code:\n";
+  m_disassembler->Disassemble(block->normalEntry, block->near_end, stream);
+  stream << "\nHost Far Code:\n";
+  m_disassembler->Disassemble(block->far_begin, block->far_end, stream);
+
+  // TODO C++20: std::ostringstream::view()
+  DEBUG_LOG_FMT(DYNA_REC, "{}", std::move(stream).str());
 }

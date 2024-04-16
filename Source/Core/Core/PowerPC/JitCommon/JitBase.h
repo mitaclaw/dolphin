@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstddef>
+#include <iosfwd>
 #include <map>
 #include <unordered_set>
 #include <utility>
@@ -187,6 +188,8 @@ public:
   JitBase& operator=(JitBase&&) = delete;
   ~JitBase() override;
 
+  void ClearCache() override;
+
   bool IsProfilingEnabled() const { return m_enable_profiling; }
   bool IsDebuggingEnabled() const { return m_enable_debugging; }
 
@@ -194,6 +197,15 @@ public:
   virtual JitBaseBlockCache* GetBlockCache() = 0;
 
   virtual void Jit(u32 em_address) = 0;
+
+  virtual void EraseSingleBlock(const JitBlock& block) = 0;
+  virtual void DisasmNearCode(const JitBlock& block, std::ostream& stream,
+                              std::size_t& instruction_count) const = 0;
+  virtual void DisasmFarCode(const JitBlock& block, std::ostream& stream,
+                             std::size_t& instruction_count) const = 0;
+  // Pair contains free size + fragmentation ratio
+  virtual std::pair<std::size_t, double> GetNearMemoryInfo() const = 0;
+  virtual std::pair<std::size_t, double> GetFarMemoryInfo() const = 0;
 
   virtual const CommonAsmRoutinesBase* GetAsmRoutines() = 0;
 

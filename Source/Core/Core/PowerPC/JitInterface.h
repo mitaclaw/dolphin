@@ -6,9 +6,10 @@
 #include <cstddef>
 #include <cstdio>
 #include <functional>
+#include <iosfwd>
 #include <memory>
 #include <string>
-#include <variant>
+#include <utility>
 
 #include "Common/CommonTypes.h"
 #include "Core/MachineContext.h"
@@ -16,6 +17,7 @@
 class CPUCoreBase;
 class PointerWrap;
 class JitBase;
+struct JitBlock;
 
 namespace Core
 {
@@ -57,8 +59,9 @@ public:
 
   void UpdateMembase();
   void JitBlockLogDump(const Core::CPUThreadGuard& guard, std::FILE* file) const;
-  std::variant<GetHostCodeError, GetHostCodeResult> GetHostCode(u32 address) const;
+  void RunOnBlocks(const Core::CPUThreadGuard& guard, std::function<void(const JitBlock&)> f) const;
   void WipeBlockProfilingData(const Core::CPUThreadGuard& guard);
+  std::size_t GetBlockCount() const;
 
   // Memory Utilities
   bool HandleFault(uintptr_t access_address, SContext* ctx);
@@ -71,6 +74,19 @@ public:
   // inside a JIT'ed block: it clears the instruction cache, but not
   // the JIT'ed code.
   void ClearSafe();
+
+  // DolphinQt's JITWidget needs this. Nothing else (from outside of the Core) should use
+  // it, or else JitBlockTableModel will contain a dangling reference. If something else
+  // from outside of the Core *must* use this, consider reworking the logic in JITWidget.
+  void EraseSingleBlock(const JitBlock& block);
+  // Disassemble the recompiled code from a JIT block.
+  void DisasmNearCode(const JitBlock& block, std::ostream& stream,
+                      std::size_t& instruction_count) const;
+  void DisasmFarCode(const JitBlock& block, std::ostream& stream,
+                     std::size_t& instruction_count) const;
+  // Pair contains free size + fragmentation ratio
+  std::pair<std::size_t, double> GetNearMemoryInfo() const;
+  std::pair<std::size_t, double> GetFarMemoryInfo() const;
 
   // If "forced" is true, a recompile is being requested on code that hasn't been modified.
   void InvalidateICache(u32 address, u32 size, bool forced);

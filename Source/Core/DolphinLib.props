@@ -34,6 +34,7 @@
     <ClInclude Include="Common\CommonFuncs.h" />
     <ClInclude Include="Common\CommonPaths.h" />
     <ClInclude Include="Common\CommonTypes.h" />
+    <ClInclude Include="Common\Concepts.h" />
     <ClInclude Include="Common\Config\Config.h" />
     <ClInclude Include="Common\Config\ConfigInfo.h" />
     <ClInclude Include="Common\Config\Enums.h" />
@@ -428,6 +429,9 @@
     <ClInclude Include="Core\NetworkCaptureLogger.h" />
     <ClInclude Include="Core\PatchEngine.h" />
     <ClInclude Include="Core\PowerPC\BreakPoints.h" />
+    <ClInclude Include="Core\PowerPC\CachedInterpreter\CachedInterpreter_Branch.h" />
+    <ClInclude Include="Core\PowerPC\CachedInterpreter\CachedInterpreter_Integer.h" />
+    <ClInclude Include="Core\PowerPC\CachedInterpreter\CachedInterpreter_LoadStore.h" />
     <ClInclude Include="Core\PowerPC\CachedInterpreter\CachedInterpreter.h" />
     <ClInclude Include="Core\PowerPC\CachedInterpreter\CachedInterpreterBlockCache.h" />
     <ClInclude Include="Core\PowerPC\CachedInterpreter\CachedInterpreterEmitter.h" />
@@ -1090,7 +1094,10 @@
     <ClCompile Include="Core\NetworkCaptureLogger.cpp" />
     <ClCompile Include="Core\PatchEngine.cpp" />
     <ClCompile Include="Core\PowerPC\BreakPoints.cpp" />
+    <ClCompile Include="Core\PowerPC\CachedInterpreter\CachedInterpreter_Branch.cpp" />
     <ClCompile Include="Core\PowerPC\CachedInterpreter\CachedInterpreter_Disassembler.cpp" />
+    <ClCompile Include="Core\PowerPC\CachedInterpreter\CachedInterpreter_Integer.cpp" />
+    <ClCompile Include="Core\PowerPC\CachedInterpreter\CachedInterpreter_LoadStore.cpp" />
     <ClCompile Include="Core\PowerPC\CachedInterpreter\CachedInterpreter_Tables.cpp" />
     <ClCompile Include="Core\PowerPC\CachedInterpreter\CachedInterpreter.cpp" />
     <ClCompile Include="Core\PowerPC\CachedInterpreter\CachedInterpreterBlockCache.cpp" />

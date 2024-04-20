@@ -4,6 +4,7 @@
 #pragma once
 
 #include <array>
+#include <concepts>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -213,10 +214,16 @@ public:
   u32 Read_Opcode(u32 address);
   TryReadInstResult TryReadInstruction(u32 address);
 
+  template <std::integral T>
+  T Read(u32 address);
+
   u8 Read_U8(u32 address);
   u16 Read_U16(u32 address);
   u32 Read_U32(u32 address);
   u64 Read_U64(u32 address);
+
+  template <std::integral T>
+  void Write(u32 var, u32 address);
 
   void Write_U8(u32 var, u32 address);
   void Write_U16(u32 var, u32 address);

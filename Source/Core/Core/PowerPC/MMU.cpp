@@ -577,6 +577,19 @@ void MMU::Memcheck(u32 address, u64 var, bool write, size_t size)
   m_ppc_state.Exceptions |= EXCEPTION_DSI | EXCEPTION_FAKE_MEMCHECK_HIT;
 }
 
+template <std::integral T>
+T MMU::Read(const u32 address)
+{
+  const T var = ReadFromHardware<XCheckTLBFlag::Read, T>(address);
+  Memcheck(address, var, false, sizeof(T));
+  return var;
+}
+
+template u8 MMU::Read(const u32 address);
+template u16 MMU::Read(const u32 address);
+template u32 MMU::Read(const u32 address);
+template u64 MMU::Read(const u32 address);
+
 u8 MMU::Read_U8(const u32 address)
 {
   u8 var = ReadFromHardware<XCheckTLBFlag::Read, u8>(address);
@@ -679,6 +692,18 @@ std::optional<ReadResult<double>> MMU::HostTryReadF64(const Core::CPUThreadGuard
     return std::nullopt;
   return ReadResult<double>(result->translated, std::bit_cast<double>(result->value));
 }
+
+template <std::integral T>
+void MMU::Write(u32 var, u32 address)
+{
+  static_assert(std::is_same_v<T, u64> == false);
+  Memcheck(address, var, true, sizeof(T));
+  WriteToHardware<XCheckTLBFlag::Write>(address, var, sizeof(T));
+}
+
+template void MMU::Write<u8>(u32, u32);
+template void MMU::Write<u16>(u32, u32);
+template void MMU::Write<u32>(u32, u32);
 
 void MMU::Write_U8(const u32 var, const u32 address)
 {

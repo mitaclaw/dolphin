@@ -25,7 +25,7 @@ constexpr std::array<CachedInterpreterOpTemplate, 54> s_primary_table{{
     {63, &CachedInterpreter::DynaRunTable63},  // RunTable63
 
     {16, &CachedInterpreter::FallBackToInterpreter},  // bcx
-    {18, &CachedInterpreter::FallBackToInterpreter},  // bx
+    {18, &CachedInterpreter::bx},                     // bx
 
     {3, &CachedInterpreter::FallBackToInterpreter},   // twi
     {17, &CachedInterpreter::FallBackToInterpreter},  // sc
@@ -36,8 +36,8 @@ constexpr std::array<CachedInterpreterOpTemplate, 54> s_primary_table{{
     {11, &CachedInterpreter::FallBackToInterpreter},  // cmpi
     {12, &CachedInterpreter::FallBackToInterpreter},  // addic
     {13, &CachedInterpreter::FallBackToInterpreter},  // addic_rc
-    {14, &CachedInterpreter::FallBackToInterpreter},  // addi
-    {15, &CachedInterpreter::FallBackToInterpreter},  // addis
+    {14, &CachedInterpreter::addi},                   // addi
+    {15, &CachedInterpreter::addis},                  // addis
 
     {20, &CachedInterpreter::FallBackToInterpreter},  // rlwimix
     {21, &CachedInterpreter::FallBackToInterpreter},  // rlwinmx
@@ -50,21 +50,21 @@ constexpr std::array<CachedInterpreterOpTemplate, 54> s_primary_table{{
     {28, &CachedInterpreter::FallBackToInterpreter},  // andi_rc
     {29, &CachedInterpreter::FallBackToInterpreter},  // andis_rc
 
-    {32, &CachedInterpreter::FallBackToInterpreter},  // lwz
-    {33, &CachedInterpreter::FallBackToInterpreter},  // lwzu
-    {34, &CachedInterpreter::FallBackToInterpreter},  // lbz
-    {35, &CachedInterpreter::FallBackToInterpreter},  // lbzu
-    {40, &CachedInterpreter::FallBackToInterpreter},  // lhz
-    {41, &CachedInterpreter::FallBackToInterpreter},  // lhzu
-    {42, &CachedInterpreter::FallBackToInterpreter},  // lha
-    {43, &CachedInterpreter::FallBackToInterpreter},  // lhau
+    {32, &CachedInterpreter::lXX_or_lXXu<u32, false>},  // lwz
+    {33, &CachedInterpreter::lXX_or_lXXu<u32, true>},   // lwzu
+    {34, &CachedInterpreter::lXX_or_lXXu<u8, false>},   // lbz
+    {35, &CachedInterpreter::lXX_or_lXXu<u8, true>},    // lbzu
+    {40, &CachedInterpreter::lXX_or_lXXu<u16, false>},  // lhz
+    {41, &CachedInterpreter::lXX_or_lXXu<u16, true>},   // lhzu
+    {42, &CachedInterpreter::FallBackToInterpreter},    // lha
+    {43, &CachedInterpreter::FallBackToInterpreter},    // lhau
 
-    {44, &CachedInterpreter::FallBackToInterpreter},  // sth
-    {45, &CachedInterpreter::FallBackToInterpreter},  // sthu
-    {36, &CachedInterpreter::FallBackToInterpreter},  // stw
-    {37, &CachedInterpreter::FallBackToInterpreter},  // stwu
-    {38, &CachedInterpreter::FallBackToInterpreter},  // stb
-    {39, &CachedInterpreter::FallBackToInterpreter},  // stbu
+    {36, &CachedInterpreter::stX_or_stXu<u32, false>},  // stw
+    {37, &CachedInterpreter::stX_or_stXu<u32, true>},   // stwu
+    {38, &CachedInterpreter::stX_or_stXu<u8, false>},   // stb
+    {39, &CachedInterpreter::stX_or_stXu<u8, true>},    // stbu
+    {44, &CachedInterpreter::stX_or_stXu<u16, false>},  // sth
+    {45, &CachedInterpreter::stX_or_stXu<u16, true>},   // sthu
 
     {46, &CachedInterpreter::FallBackToInterpreter},  // lmw
     {47, &CachedInterpreter::FallBackToInterpreter},  // stmw
@@ -133,8 +133,8 @@ constexpr std::array<CachedInterpreterOpTemplate, 4> s_table4_3{{
 }};
 
 constexpr std::array<CachedInterpreterOpTemplate, 13> s_table19{{
-    {528, &CachedInterpreter::FallBackToInterpreter},  // bcctrx
-    {16, &CachedInterpreter::FallBackToInterpreter},   // bclrx
+    {528, &CachedInterpreter::bcctrx},                 // bcctrx
+    {16, &CachedInterpreter::bclrx},                   // bclrx
     {257, &CachedInterpreter::FallBackToInterpreter},  // crand
     {129, &CachedInterpreter::FallBackToInterpreter},  // crandc
     {289, &CachedInterpreter::FallBackToInterpreter},  // creqv
@@ -209,20 +209,20 @@ constexpr std::array<CachedInterpreterOpTemplate, 107> s_table31{{
     {1014, &CachedInterpreter::FallBackToInterpreter},  // dcbz
 
     // load word
-    {23, &CachedInterpreter::FallBackToInterpreter},  // lwzx
-    {55, &CachedInterpreter::FallBackToInterpreter},  // lwzux
+    {23, &CachedInterpreter::lXXx_or_lXXux<u32, false>},  // lwzx
+    {55, &CachedInterpreter::lXXx_or_lXXux<u32, true>},   // lwzux
 
     // load halfword
-    {279, &CachedInterpreter::FallBackToInterpreter},  // lhzx
-    {311, &CachedInterpreter::FallBackToInterpreter},  // lhzux
+    {279, &CachedInterpreter::lXXx_or_lXXux<u16, false>},  // lhzx
+    {311, &CachedInterpreter::lXXx_or_lXXux<u16, true>},   // lhzux
 
     // load halfword signextend
     {343, &CachedInterpreter::FallBackToInterpreter},  // lhax
     {375, &CachedInterpreter::FallBackToInterpreter},  // lhaux
 
     // load byte
-    {87, &CachedInterpreter::FallBackToInterpreter},   // lbzx
-    {119, &CachedInterpreter::FallBackToInterpreter},  // lbzux
+    {87, &CachedInterpreter::lXXx_or_lXXux<u8, false>},  // lbzx
+    {119, &CachedInterpreter::lXXx_or_lXXux<u8, true>},  // lbzux
 
     // load byte reverse
     {534, &CachedInterpreter::FallBackToInterpreter},  // lwbrx
@@ -237,16 +237,16 @@ constexpr std::array<CachedInterpreterOpTemplate, 107> s_table31{{
     {597, &CachedInterpreter::FallBackToInterpreter},  // lswi
 
     // store word
-    {151, &CachedInterpreter::FallBackToInterpreter},  // stwx
-    {183, &CachedInterpreter::FallBackToInterpreter},  // stwux
-
-    // store halfword
-    {407, &CachedInterpreter::FallBackToInterpreter},  // sthx
-    {439, &CachedInterpreter::FallBackToInterpreter},  // sthux
+    {151, &CachedInterpreter::stXx_or_stXux<u32, false>},  // stwx
+    {183, &CachedInterpreter::stXx_or_stXux<u32, true>},   // stwux
 
     // store byte
-    {215, &CachedInterpreter::FallBackToInterpreter},  // stbx
-    {247, &CachedInterpreter::FallBackToInterpreter},  // stbux
+    {215, &CachedInterpreter::stXx_or_stXux<u8, false>},  // stbx
+    {247, &CachedInterpreter::stXx_or_stXux<u8, true>},   // stbux
+
+    // store halfword
+    {407, &CachedInterpreter::stXx_or_stXux<u16, false>},  // sthx
+    {439, &CachedInterpreter::stXx_or_stXux<u16, true>},   // sthux
 
     // store bytereverse
     {662, &CachedInterpreter::FallBackToInterpreter},  // stwbrx

@@ -3,11 +3,13 @@
 
 #pragma once
 
+#include <concepts>
 #include <cstddef>
 
 #include <rangeset/rangesizeset.h>
 
 #include "Common/CommonTypes.h"
+#include "Common/Concepts.h"
 #include "Core/PowerPC/CachedInterpreter/CachedInterpreterBlockCache.h"
 #include "Core/PowerPC/CachedInterpreter/CachedInterpreterEmitter.h"
 #include "Core/PowerPC/JitCommon/JitBase.h"
@@ -42,6 +44,8 @@ public:
   void Run() override;
   void SingleStep() override;
 
+  void EnableOptimization();
+
   void Jit(u32 address) override;
   void Jit(u32 address, bool clear_cache_and_retry_on_failure);
   bool DoJit(u32 address, JitBlock* b, u32 nextPC);
@@ -69,6 +73,21 @@ public:
   using Instruction = void (CachedInterpreter::*)(UGeckoInstruction);
   void FallBackToInterpreter(UGeckoInstruction inst);
 
+  void addi(UGeckoInstruction inst);
+  void addis(UGeckoInstruction inst);
+  void bx(UGeckoInstruction inst);
+  void bclrx(UGeckoInstruction inst);
+  void bcctrx(UGeckoInstruction inst);
+
+  template <typename T, bool with_update>
+  void lXX_or_lXXu(UGeckoInstruction inst);
+  template <typename T, bool with_update>
+  void lXXx_or_lXXux(UGeckoInstruction inst);
+  template <typename T, bool with_update>
+  void stX_or_stXu(UGeckoInstruction inst);
+  template <typename T, bool with_update>
+  void stXx_or_stXux(UGeckoInstruction inst);
+
 private:
   void ExecuteOneBlock();
 
@@ -84,6 +103,7 @@ private:
 
   void LogGeneratedCode() const;
 
+public:  // TODO: No
   struct StartProfiledBlockOperands;
   template <bool profiled>
   struct EndBlockOperands;

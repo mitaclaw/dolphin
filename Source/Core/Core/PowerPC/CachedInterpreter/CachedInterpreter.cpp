@@ -34,6 +34,7 @@ CachedInterpreter::~CachedInterpreter() = default;
 void CachedInterpreter::Init()
 {
   RefreshConfig();
+  EnableOptimization();
 
   AllocCodeSpace(CODE_SIZE);
   ResetFreeMemoryRanges();
@@ -288,6 +289,12 @@ void CachedInterpreter::ResetFreeMemoryRanges()
 {
   m_free_ranges.clear();
   m_free_ranges.insert(region, region + region_size);
+}
+
+void CachedInterpreter::EnableOptimization()
+{
+  // Enable this once Branch Watch stuff is in for skipped BLRs.
+  // analyzer.SetOption(PPCAnalyst::PPCAnalyzer::OPTION_BRANCH_FOLLOW);
 }
 
 void CachedInterpreter::Jit(u32 em_address)

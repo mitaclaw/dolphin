@@ -17,7 +17,7 @@ struct PowerPCState;
 
 class CachedInterpreterEmitter
 {
-protected:
+public:  /// TODO no
   // The return value of most callbacks is the distance in memory to the next callback.
   // If a callback returns 0, the block will be exited. The return value is signed to
   // support block-linking. 32-bit return values seem to perform better than 64-bit ones.

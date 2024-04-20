@@ -479,7 +479,13 @@ add_library(core
   PatchEngine.h
   PowerPC/BreakPoints.cpp
   PowerPC/BreakPoints.h
+  PowerPC/CachedInterpreter/CachedInterpreter_Branch.cpp
+  PowerPC/CachedInterpreter/CachedInterpreter_Branch.h
   PowerPC/CachedInterpreter/CachedInterpreter_Disassembler.cpp
+  PowerPC/CachedInterpreter/CachedInterpreter_Integer.cpp
+  PowerPC/CachedInterpreter/CachedInterpreter_Integer.h
+  PowerPC/CachedInterpreter/CachedInterpreter_LoadStore.cpp
+  PowerPC/CachedInterpreter/CachedInterpreter_LoadStore.h
   PowerPC/CachedInterpreter/CachedInterpreter_Tables.cpp
   PowerPC/CachedInterpreter/CachedInterpreter.cpp
   PowerPC/CachedInterpreter/CachedInterpreter.h

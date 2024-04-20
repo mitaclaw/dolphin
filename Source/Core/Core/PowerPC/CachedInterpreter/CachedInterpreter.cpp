@@ -205,6 +205,35 @@ s32 CachedInterpreter::CheckIdle(PowerPC::PowerPCState& ppc_state,
   return sizeof(AnyCallback) + sizeof(operands);
 }
 
+void CachedInterpreter::FallBackToInterpreter(UGeckoInstruction inst)
+{
+  const PPCAnalyst::CodeOp* op = js.op;
+  const Interpreter::Instruction interpreter_op = Interpreter::GetInterpreterOp(op->inst);
+  auto& interpreter = m_system.GetInterpreter();
+
+  // Instruction may cause a DSI Exception or Program Exception.
+  if ((jo.memcheck && (op->opinfo->flags & FL_LOADSTORE) != 0) ||
+      (!op->canEndBlock && ShouldHandleFPExceptionForInstruction(op)))
+  {
+    const InterpretAndCheckExceptionsOperands operands = {
+        {interpreter, interpreter_op, js.compilerPC, op->inst}, m_system.GetPowerPC(), js.downcountAmount};
+    Write(op->canEndBlock ? CallbackCast(InterpretAndCheckExceptions<true>) :
+                            CallbackCast(InterpretAndCheckExceptions<false>),
+          operands);
+  }
+  else
+  {
+    const InterpretOperands operands = {interpreter, interpreter_op, js.compilerPC, op->inst};
+    Write(op->canEndBlock ? CallbackCast(Interpret<true>) : CallbackCast(Interpret<false>),
+          operands);
+  }
+
+  if (op->branchIsIdleLoop)
+    Write(CheckIdle, {m_system.GetCoreTiming(), js.blockStart});
+  if (op->canEndBlock)
+    WriteEndBlock();
+}
+
 bool CachedInterpreter::HandleFunctionHooking(u32 address)
 {
   // CachedInterpreter inherits from JitBase and is considered a JIT by relevant code.
@@ -334,7 +363,6 @@ bool CachedInterpreter::DoJit(u32 em_address, JitBlock* b, u32 nextPC)
   js.numFloatingPointInst = 0;
   js.curBlock = b;
 
-  auto& interpreter = m_system.GetInterpreter();
   auto& power_pc = m_system.GetPowerPC();
   auto& cpu = m_system.GetCPU();
   auto& breakpoints = power_pc.GetBreakPoints();
@@ -370,31 +398,7 @@ bool CachedInterpreter::DoJit(u32 em_address, JitBlock* b, u32 nextPC)
         Write(CheckFPU, {power_pc, js.compilerPC, js.downcountAmount});
         js.firstFPInstructionFound = true;
       }
-
-      // Instruction may cause a DSI Exception or Program Exception.
-      if ((jo.memcheck && (op.opinfo->flags & FL_LOADSTORE) != 0) ||
-          (!op.canEndBlock && ShouldHandleFPExceptionForInstruction(&op)))
-      {
-        const InterpretAndCheckExceptionsOperands operands = {
-            {interpreter, Interpreter::GetInterpreterOp(op.inst), js.compilerPC, op.inst},
-            power_pc,
-            js.downcountAmount};
-        Write(op.canEndBlock ? CallbackCast(InterpretAndCheckExceptions<true>) :
-                               CallbackCast(InterpretAndCheckExceptions<false>),
-              operands);
-      }
-      else
-      {
-        const InterpretOperands operands = {interpreter, Interpreter::GetInterpreterOp(op.inst),
-                                            js.compilerPC, op.inst};
-        Write(op.canEndBlock ? CallbackCast(Interpret<true>) : CallbackCast(Interpret<false>),
-              operands);
-      }
-
-      if (op.branchIsIdleLoop)
-        Write(CheckIdle, {m_system.GetCoreTiming(), js.blockStart});
-      if (op.canEndBlock)
-        WriteEndBlock();
+      CompileInstruction(op);
     }
   }
   if (code_block.m_broken)

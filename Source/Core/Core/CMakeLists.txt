@@ -480,6 +480,7 @@ add_library(core
   PowerPC/BreakPoints.cpp
   PowerPC/BreakPoints.h
   PowerPC/CachedInterpreter/CachedInterpreter_Disassembler.cpp
+  PowerPC/CachedInterpreter/CachedInterpreter_Tables.cpp
   PowerPC/CachedInterpreter/CachedInterpreter.cpp
   PowerPC/CachedInterpreter/CachedInterpreter.h
   PowerPC/CachedInterpreter/CachedInterpreterBlockCache.cpp

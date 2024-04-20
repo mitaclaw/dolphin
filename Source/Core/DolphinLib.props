@@ -1091,6 +1091,7 @@
     <ClCompile Include="Core\PatchEngine.cpp" />
     <ClCompile Include="Core\PowerPC\BreakPoints.cpp" />
     <ClCompile Include="Core\PowerPC\CachedInterpreter\CachedInterpreter_Disassembler.cpp" />
+    <ClCompile Include="Core\PowerPC\CachedInterpreter\CachedInterpreter_Tables.cpp" />
     <ClCompile Include="Core\PowerPC\CachedInterpreter\CachedInterpreter.cpp" />
     <ClCompile Include="Core\PowerPC\CachedInterpreter\CachedInterpreterBlockCache.cpp" />
     <ClCompile Include="Core\PowerPC\CachedInterpreter\CachedInterpreterEmitter.cpp" />

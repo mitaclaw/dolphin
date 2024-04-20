@@ -58,6 +58,17 @@ public:
   const char* GetName() const override { return "Cached Interpreter"; }
   const CommonAsmRoutinesBase* GetAsmRoutines() override { return nullptr; }
 
+  void DynaRunTable4(UGeckoInstruction inst);
+  void DynaRunTable19(UGeckoInstruction inst);
+  void DynaRunTable31(UGeckoInstruction inst);
+  void DynaRunTable59(UGeckoInstruction inst);
+  void DynaRunTable63(UGeckoInstruction inst);
+  void CompileInstruction(const PPCAnalyst::CodeOp& op);
+
+  // OPCODES
+  using Instruction = void (CachedInterpreter::*)(UGeckoInstruction);
+  void FallBackToInterpreter(UGeckoInstruction inst);
+
 private:
   void ExecuteOneBlock();
 

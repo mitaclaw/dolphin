@@ -132,9 +132,9 @@ s32 CachedInterpreter::CheckFPU(const ExceptionCheckOperands& operands)
   const auto& [power_pc, downcount] = operands;
   if (auto& ppc_state = power_pc.GetPPCState(); !ppc_state.msr.FP)
   {
+    ppc_state.downcount -= downcount;
     ppc_state.Exceptions |= EXCEPTION_FPU_UNAVAILABLE;
     power_pc.CheckExceptions();
-    ppc_state.downcount -= downcount;
     return 0;
   }
   return sizeof(operands);
@@ -145,8 +145,8 @@ s32 CachedInterpreter::CheckDSI(const ExceptionCheckOperands& operands)
   const auto& [power_pc, downcount] = operands;
   if (auto& ppc_state = power_pc.GetPPCState(); (ppc_state.Exceptions & EXCEPTION_DSI) != 0)
   {
-    power_pc.CheckExceptions();
     ppc_state.downcount -= downcount;
+    power_pc.CheckExceptions();
     return 0;
   }
   return sizeof(operands);
@@ -157,8 +157,8 @@ s32 CachedInterpreter::CheckProgramException(const ExceptionCheckOperands& opera
   const auto& [power_pc, downcount] = operands;
   if (auto& ppc_state = power_pc.GetPPCState(); (ppc_state.Exceptions & EXCEPTION_PROGRAM) != 0)
   {
-    power_pc.CheckExceptions();
     ppc_state.downcount -= downcount;
+    power_pc.CheckExceptions();
     return 0;
   }
   return sizeof(operands);

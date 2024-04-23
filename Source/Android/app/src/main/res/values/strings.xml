@@ -409,6 +409,7 @@
     <string name="debug_jit_profiling_header">Jit Profiling</string>
     <string name="debug_jit_enable_block_profiling">Enable Jit Block Profiling</string>
     <string name="debug_jit_write_block_log_dump">Write Jit Block Log Dump</string>
+    <string name="debug_loadbreakpoints">LoadBreakpoints()</string>
     <string name="debug_jit_header">Jit</string>
     <string name="debug_jitoff">Jit Disabled</string>
     <string name="debug_jitloadstoreoff">Jit Load Store Disabled</string>

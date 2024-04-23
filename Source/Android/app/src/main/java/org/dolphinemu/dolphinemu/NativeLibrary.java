@@ -386,6 +386,11 @@ public final class NativeLibrary
   public static native boolean IsRunningAndUnpaused();
 
   /**
+   * Load Breakpoints
+   */
+  public static native void LoadBreakpoints();
+
+  /**
    * Writes out the JitBlock Cache log dump
    */
   public static native void WriteJitBlockLogDump();

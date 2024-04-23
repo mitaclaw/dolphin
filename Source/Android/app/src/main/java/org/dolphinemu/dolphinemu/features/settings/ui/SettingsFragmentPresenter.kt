@@ -1997,6 +1997,16 @@ class SettingsFragmentPresenter(
                 true
             ) { NativeLibrary.WriteJitBlockLogDump() }
         )
+        sl.add(
+            RunRunnable(
+                context,
+                R.string.debug_loadbreakpoints,
+                0,
+                0,
+                0,
+                true
+            ) { NativeLibrary.LoadBreakpoints() }
+        )
 
         sl.add(HeaderSetting(context, R.string.debug_jit_header, 0))
         sl.add(

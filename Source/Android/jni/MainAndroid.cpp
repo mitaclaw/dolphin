@@ -435,6 +435,41 @@ JNIEXPORT void JNICALL Java_org_dolphinemu_dolphinemu_NativeLibrary_WriteJitBloc
                             static_cast<jboolean>(false));
 }
 
+JNIEXPORT void JNICALL Java_org_dolphinemu_dolphinemu_NativeLibrary_LoadBreakpoints(JNIEnv* env, jclass native_library_class)
+{
+  HostThreadLock guard;
+
+  Common::IniFile ini;
+  if (!ini.Load(File::GetUserPath(D_GAMESETTINGS_IDX) + SConfig::GetInstance().GetGameID() + ".ini",
+                false))
+  {
+    return;
+  }
+  auto& system = Core::System::GetInstance();
+  const Core::CPUThreadGuard cpu_guard(system);
+  auto& power_pc = system.GetPowerPC();
+
+  auto& breakpoints = power_pc.GetBreakPoints();
+  BreakPoints::TBreakPointsStr new_bps;
+  if (ini.GetLines("BreakPoints", &new_bps, false))
+  {
+    breakpoints.Clear();
+    breakpoints.AddFromStrings(new_bps);
+  }
+
+  auto& memchecks = power_pc.GetMemChecks();
+  MemChecks::TMemChecksStr new_mcs;
+  if (ini.GetLines("MemoryBreakPoints", &new_mcs, false))
+  {
+    memchecks.Clear();
+    memchecks.AddFromStrings(new_mcs);
+  }
+
+  env->CallStaticVoidMethod(native_library_class, IDCache::GetDisplayToastMsg(),
+                            ToJString(env, Common::FmtFormatT("{0} Breakpoint(s) loaded.\n{1} Memcheck(s) loaded.", breakpoints.GetBreakPoints().size(), memchecks.GetMemChecks().size())),
+                            static_cast<jboolean>(false));
+}
+
 // Surface Handling
 JNIEXPORT void JNICALL Java_org_dolphinemu_dolphinemu_NativeLibrary_SurfaceChanged(JNIEnv* env,
                                                                                    jclass,

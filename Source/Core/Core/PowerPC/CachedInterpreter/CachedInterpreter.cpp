@@ -108,6 +108,7 @@ s32 CachedInterpreter::Interpret(const InterpretOperands& operands)
 s32 CachedInterpreter::HLEFunction(const HLEFunctionOperands& operands)
 {
   const auto& [system, current_pc, hook_index] = operands;
+  system.GetPPCState().pc = current_pc;
   HLE::Execute(Core::CPUThreadGuard{system}, current_pc, hook_index);
   return sizeof(operands);
 }
@@ -129,9 +130,10 @@ s32 CachedInterpreter::WriteBrokenBlockNPC(const WritePCOperands& operands)
 
 s32 CachedInterpreter::CheckFPU(const ExceptionCheckOperands& operands)
 {
-  const auto& [power_pc, downcount] = operands;
+  const auto& [power_pc, current_pc, downcount] = operands;
   if (auto& ppc_state = power_pc.GetPPCState(); !ppc_state.msr.FP)
   {
+    ppc_state.pc = current_pc;
     ppc_state.downcount -= downcount;
     ppc_state.Exceptions |= EXCEPTION_FPU_UNAVAILABLE;
     power_pc.CheckExceptions();
@@ -142,9 +144,10 @@ s32 CachedInterpreter::CheckFPU(const ExceptionCheckOperands& operands)
 
 s32 CachedInterpreter::CheckDSI(const ExceptionCheckOperands& operands)
 {
-  const auto& [power_pc, downcount] = operands;
+  const auto& [power_pc, current_pc, downcount] = operands;
   if (auto& ppc_state = power_pc.GetPPCState(); (ppc_state.Exceptions & EXCEPTION_DSI) != 0)
   {
+    ppc_state.pc = current_pc;
     ppc_state.downcount -= downcount;
     power_pc.CheckExceptions();
     return 0;
@@ -154,9 +157,10 @@ s32 CachedInterpreter::CheckDSI(const ExceptionCheckOperands& operands)
 
 s32 CachedInterpreter::CheckProgramException(const ExceptionCheckOperands& operands)
 {
-  const auto& [power_pc, downcount] = operands;
+  const auto& [power_pc, current_pc, downcount] = operands;
   if (auto& ppc_state = power_pc.GetPPCState(); (ppc_state.Exceptions & EXCEPTION_PROGRAM) != 0)
   {
+    ppc_state.pc = current_pc;
     ppc_state.downcount -= downcount;
     power_pc.CheckExceptions();
     return 0;
@@ -166,7 +170,9 @@ s32 CachedInterpreter::CheckProgramException(const ExceptionCheckOperands& opera
 
 s32 CachedInterpreter::CheckBreakpoint(const CheckBreakpointOperands& operands)
 {
-  const auto& [power_pc, cpu_state, downcount] = operands;
+  const auto& [power_pc, cpu_state, current_pc, downcount] = operands;
+  // Calling PowerPCManager::GetPPCState twice produces better assembly.
+  power_pc.GetPPCState().pc = current_pc;
   if (power_pc.CheckBreakPoints(); *cpu_state != CPU::State::Running)
   {
     power_pc.GetPPCState().downcount -= downcount;
@@ -191,7 +197,6 @@ bool CachedInterpreter::HandleFunctionHooking(u32 address)
   if (!result)
     return false;
 
-  Write(WritePC, {m_ppc_state, address});
   Write(HLEFunction, {m_system, address, result.hook_index});
 
   if (result.type != HLE::HookType::Replace)
@@ -329,23 +334,24 @@ bool CachedInterpreter::DoJit(u32 em_address, JitBlock* b, u32 nextPC)
       const bool check_program_exception = !endblock && ShouldHandleFPExceptionForInstruction(&op);
       const bool idle_loop = op.branchIsIdleLoop;
 
-      if (breakpoint || check_fpu || endblock || memcheck || check_program_exception)
-        Write(WritePC, {m_ppc_state, js.compilerPC});
-
       if (breakpoint)
-        Write(CheckBreakpoint, {power_pc, m_system.GetCPU().GetStatePtr(), js.downcountAmount});
-
+      {
+        Write(CheckBreakpoint,
+              {power_pc, m_system.GetCPU().GetStatePtr(), js.compilerPC, js.downcountAmount});
+      }
       if (check_fpu)
       {
-        Write(CheckFPU, {power_pc, js.downcountAmount});
+        Write(CheckFPU, {power_pc, js.compilerPC, js.downcountAmount});
         js.firstFPInstructionFound = true;
       }
 
+      if (endblock)
+        Write(WritePC, {m_ppc_state, js.compilerPC});
       Write(Interpret, {interpreter, Interpreter::GetInterpreterOp(op.inst), op.inst});
       if (memcheck)
-        Write(CheckDSI, {power_pc, js.downcountAmount});
+        Write(CheckDSI, {power_pc, js.compilerPC, js.downcountAmount});
       if (check_program_exception)
-        Write(CheckProgramException, {power_pc, js.downcountAmount});
+        Write(CheckProgramException, {power_pc, js.compilerPC, js.downcountAmount});
       if (idle_loop)
         Write(CheckIdle, {m_system, js.blockStart});
       if (endblock)

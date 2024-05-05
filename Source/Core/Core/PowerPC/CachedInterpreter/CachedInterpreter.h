@@ -114,6 +114,7 @@ struct CachedInterpreter::WritePCOperands
 struct CachedInterpreter::ExceptionCheckOperands
 {
   PowerPC::PowerPCManager& power_pc;
+  u32 current_pc;
   u32 downcount;
 };
 
@@ -121,6 +122,7 @@ struct CachedInterpreter::CheckBreakpointOperands
 {
   PowerPC::PowerPCManager& power_pc;
   const CPU::State* cpu_state;
+  u32 current_pc;
   u32 downcount;
 };
 

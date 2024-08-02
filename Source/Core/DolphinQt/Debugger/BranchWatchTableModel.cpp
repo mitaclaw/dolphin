@@ -340,9 +340,9 @@ QVariant BranchWatchTableModel::DisplayRoleData(const QModelIndex& index) const
   case Column::Destination:
     return QString::number(kv->first.destin_addr, 16);
   case Column::RecentHits:
-    return QString::number(kv->second.total_hits - kv->second.hits_snapshot);
+    return QString::number(kv->second->total_hits - kv->second->hits_snapshot);
   case Column::TotalHits:
-    return QString::number(kv->second.total_hits);
+    return QString::number(kv->second->total_hits);
   }
   static_assert(Column::NumberOfColumns == 8);
   Common::Unreachable();
@@ -485,9 +485,9 @@ QVariant BranchWatchTableModel::SortRoleData(const QModelIndex& index) const
   case Column::Destination:
     return kv->first.destin_addr;
   case Column::RecentHits:
-    return qulonglong{kv->second.total_hits - kv->second.hits_snapshot};
+    return qulonglong{kv->second->total_hits - kv->second->hits_snapshot};
   case Column::TotalHits:
-    return qulonglong{kv->second.total_hits};
+    return qulonglong{kv->second->total_hits};
   }
   static_assert(Column::NumberOfColumns == 8);
   Common::Unreachable();

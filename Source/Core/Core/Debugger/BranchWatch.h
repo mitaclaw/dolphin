@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <functional>
+#include <memory>
 #include <unordered_map>
 #include <vector>
 
@@ -86,8 +87,23 @@ constexpr BranchWatchSelectionInspection& operator|=(BranchWatchSelectionInspect
   return self = self | other;
 }
 
+class BranchWatchCollectionValueSharedPtr : public std::shared_ptr<BranchWatchCollectionValue>
+{
+public:
+  explicit BranchWatchCollectionValueSharedPtr()
+      : std::shared_ptr<BranchWatchCollectionValue>(std::make_shared<BranchWatchCollectionValue>())
+  {
+  }
+  explicit BranchWatchCollectionValueSharedPtr(std::size_t total_hits, std::size_t hits_snapshot)
+      : BranchWatchCollectionValueSharedPtr()
+  {
+    (*this)->total_hits = total_hits;
+    (*this)->hits_snapshot = hits_snapshot;
+  }
+};
+
 using BranchWatchCollection =
-    std::unordered_map<BranchWatchCollectionKey, BranchWatchCollectionValue>;
+    std::unordered_map<BranchWatchCollectionKey, BranchWatchCollectionValueSharedPtr>;
 
 struct BranchWatchSelectionValueType
 {
@@ -106,6 +122,20 @@ enum class BranchWatchPhase : bool
 {
   Blacklist,
   Reduction,
+};
+
+class BranchWatch;
+
+struct BranchWatchCachedHit
+{
+  explicit BranchWatchCachedHit(BranchWatch& branch_watch_, BranchWatchCollectionKey key_)
+      : weak_ref(), branch_watch(branch_watch_), key(key_)
+  {
+  }
+
+  std::weak_ptr<BranchWatchCollectionValue> weak_ref;
+  BranchWatch& branch_watch;
+  BranchWatchCollectionKey key;
 };
 
 class BranchWatch final  // Class is final to enforce the safety of GetOffsetOfRecordingActive().
@@ -155,40 +185,126 @@ public:
   static void HitVirtualTrue_fk(BranchWatch* branch_watch, u64 fake_key, u32 inst)
   {
     branch_watch->m_collection_vt[{std::bit_cast<FakeBranchWatchCollectionKey>(fake_key), inst}]
-        .total_hits += 1;
+        ->total_hits += 1;
   }
 
   static void HitPhysicalTrue_fk(BranchWatch* branch_watch, u64 fake_key, u32 inst)
   {
     branch_watch->m_collection_pt[{std::bit_cast<FakeBranchWatchCollectionKey>(fake_key), inst}]
-        .total_hits += 1;
+        ->total_hits += 1;
   }
 
   static void HitVirtualFalse_fk(BranchWatch* branch_watch, u64 fake_key, u32 inst)
   {
     branch_watch->m_collection_vf[{std::bit_cast<FakeBranchWatchCollectionKey>(fake_key), inst}]
-        .total_hits += 1;
+        ->total_hits += 1;
   }
 
   static void HitPhysicalFalse_fk(BranchWatch* branch_watch, u64 fake_key, u32 inst)
   {
     branch_watch->m_collection_pf[{std::bit_cast<FakeBranchWatchCollectionKey>(fake_key), inst}]
-        .total_hits += 1;
+        ->total_hits += 1;
   }
 
   static void HitVirtualTrue_fk_n(BranchWatch* branch_watch, u64 fake_key, u32 inst, u32 n)
   {
     branch_watch->m_collection_vt[{std::bit_cast<FakeBranchWatchCollectionKey>(fake_key), inst}]
-        .total_hits += n;
+        ->total_hits += n;
   }
 
   static void HitPhysicalTrue_fk_n(BranchWatch* branch_watch, u64 fake_key, u32 inst, u32 n)
   {
     branch_watch->m_collection_pt[{std::bit_cast<FakeBranchWatchCollectionKey>(fake_key), inst}]
-        .total_hits += n;
+        ->total_hits += n;
   }
 
   // HitVirtualFalse_fk_n and HitPhysicalFalse_fk_n are never used, so they are omitted here.
+
+  static void CachedHitVirtualTrue(BranchWatchCachedHit* cached_hit)
+  {
+    if (const auto strong_ref = cached_hit->weak_ref.lock())
+    {
+      strong_ref->total_hits += 1;
+      return;
+    }
+    auto& strong_ref = cached_hit->branch_watch.m_collection_vt[cached_hit->key];
+    cached_hit->weak_ref = strong_ref;
+    strong_ref->total_hits += 1;
+  }
+
+  static void CachedHitPhysicalTrue(BranchWatchCachedHit* cached_hit)
+  {
+    if (const auto strong_ref = cached_hit->weak_ref.lock())
+    {
+      strong_ref->total_hits += 1;
+      return;
+    }
+    auto& strong_ref = cached_hit->branch_watch.m_collection_pt[cached_hit->key];
+    cached_hit->weak_ref = strong_ref;
+    strong_ref->total_hits += 1;
+  }
+
+  static void CachedHitVirtualFalse(BranchWatchCachedHit* cached_hit)
+  {
+    if (const auto strong_ref = cached_hit->weak_ref.lock())
+    {
+      strong_ref->total_hits += 1;
+      return;
+    }
+    auto& strong_ref = cached_hit->branch_watch.m_collection_vf[cached_hit->key];
+    cached_hit->weak_ref = strong_ref;
+    strong_ref->total_hits += 1;
+  }
+
+  static void CachedHitPhysicalFalse(BranchWatchCachedHit* cached_hit)
+  {
+    if (const auto strong_ref = cached_hit->weak_ref.lock())
+    {
+      strong_ref->total_hits += 1;
+      return;
+    }
+    auto& strong_ref = cached_hit->branch_watch.m_collection_pf[cached_hit->key];
+    cached_hit->weak_ref = strong_ref;
+    strong_ref->total_hits += 1;
+  }
+
+  static void CachedHitVirtualTrue2(BranchWatchCachedHit* cached_hit, u32 destination)
+  {
+    if (cached_hit->key.destin_addr == destination)
+    {
+      if (const auto strong_ref = cached_hit->weak_ref.lock())
+      {
+        strong_ref->total_hits += 1;
+        return;
+      }
+    }
+    else
+    {
+      cached_hit->key.destin_addr = destination;
+    }
+    auto& strong_ref = cached_hit->branch_watch.m_collection_vt[cached_hit->key];
+    cached_hit->weak_ref = strong_ref;
+    strong_ref->total_hits += 1;
+  }
+
+  static void CachedHitPhysicalTrue2(BranchWatchCachedHit* cached_hit, u32 destination)
+  {
+    if (cached_hit->key.destin_addr == destination)
+    {
+      if (const auto strong_ref = cached_hit->weak_ref.lock())
+      {
+        strong_ref->total_hits += 1;
+        return;
+      }
+    }
+    else
+    {
+      cached_hit->key.destin_addr = destination;
+    }
+    auto& strong_ref = cached_hit->branch_watch.m_collection_pt[cached_hit->key];
+    cached_hit->weak_ref = strong_ref;
+    strong_ref->total_hits += 1;
+  }
 
   static void HitVirtualTrue(BranchWatch* branch_watch, u32 origin, u32 destination, u32 inst)
   {

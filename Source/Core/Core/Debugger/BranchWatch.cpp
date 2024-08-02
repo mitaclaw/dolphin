@@ -76,8 +76,8 @@ void BranchWatch::Save(const CPUThreadGuard& guard, std::FILE* file) const
           m_selection.begin(), m_selection.end(),
           [&](const Selection::value_type& value) { return value.collection_ptr == &kv; });
       fmt::println(file, "{:08x} {:08x} {:08x} {} {} {:x}", kv.first.origin_addr,
-                   kv.first.destin_addr, kv.first.original_inst.hex, kv.second.total_hits,
-                   kv.second.hits_snapshot,
+                   kv.first.destin_addr, kv.first.original_inst.hex, kv.second->total_hits,
+                   kv.second->hits_snapshot,
                    iter == m_selection.end() ?
                        USnapshotMetadata(is_virtual, condition, false, {}).hex :
                        USnapshotMetadata(is_virtual, condition, true, iter->inspection).hex);
@@ -107,8 +107,7 @@ void BranchWatch::Load(const CPUThreadGuard& guard, std::FILE* file)
 
     const auto [kv_iter, emplace_success] =
         GetCollection(is_virtual, condition)
-            .try_emplace({{origin_addr, destin_addr}, inst_hex},
-                         BranchWatchCollectionValue{total_hits, hits_snapshot});
+            .try_emplace({{origin_addr, destin_addr}, inst_hex}, total_hits, hits_snapshot);
 
     if (!emplace_success)
       continue;
@@ -139,12 +138,12 @@ void BranchWatch::IsolateHasExecuted(const CPUThreadGuard&)
     const auto routine = [&](Collection& collection, bool is_virtual, bool condition) {
       for (Collection::value_type& kv : collection)
       {
-        if (kv.second.hits_snapshot == 0)
+        if (kv.second->hits_snapshot == 0)
         {
           // TODO C++20: Parenthesized initialization of aggregates has bad compiler support.
           m_selection.emplace_back(
               BranchWatchSelectionValueType{&kv, is_virtual, condition, SelectionInspection{}});
-          kv.second.hits_snapshot = kv.second.total_hits;
+          kv.second->hits_snapshot = kv.second->total_hits;
         }
       }
     };
@@ -158,9 +157,9 @@ void BranchWatch::IsolateHasExecuted(const CPUThreadGuard&)
   case Phase::Reduction:
     std::erase_if(m_selection, [](const Selection::value_type& value) -> bool {
       Collection::value_type* const kv = value.collection_ptr;
-      if (kv->second.total_hits == kv->second.hits_snapshot)
+      if (kv->second->total_hits == kv->second->hits_snapshot)
         return true;
-      kv->second.hits_snapshot = kv->second.total_hits;
+      kv->second->hits_snapshot = kv->second->total_hits;
       return false;
     });
     return;
@@ -175,7 +174,7 @@ void BranchWatch::IsolateNotExecuted(const CPUThreadGuard&)
   {
     const auto routine = [&](Collection& collection) {
       for (Collection::value_type& kv : collection)
-        kv.second.hits_snapshot = kv.second.total_hits;
+        kv.second->hits_snapshot = kv.second->total_hits;
     };
     routine(m_collection_vt);
     routine(m_collection_vf);
@@ -187,9 +186,9 @@ void BranchWatch::IsolateNotExecuted(const CPUThreadGuard&)
   case Phase::Reduction:
     std::erase_if(m_selection, [](const Selection::value_type& value) -> bool {
       Collection::value_type* const kv = value.collection_ptr;
-      if (kv->second.total_hits != kv->second.hits_snapshot)
+      if (kv->second->total_hits != kv->second->hits_snapshot)
         return true;
-      kv->second.hits_snapshot = kv->second.total_hits;
+      kv->second->hits_snapshot = kv->second->total_hits;
       return false;
     });
     return;
@@ -213,14 +212,14 @@ void BranchWatch::IsolateWasOverwritten(const CPUThreadGuard& guard)
     const auto routine = [&](Collection& collection, PowerPC::RequestedAddressSpace address_space) {
       for (Collection::value_type& kv : collection)
       {
-        if (kv.second.hits_snapshot == 0)
+        if (kv.second->hits_snapshot == 0)
         {
           const std::optional read_result =
               PowerPC::MMU::HostTryReadInstruction(guard, kv.first.origin_addr, address_space);
           if (!read_result.has_value())
             continue;
           if (kv.first.original_inst.hex == read_result->value)
-            kv.second.hits_snapshot = ++m_blacklist_size;  // Any non-zero number will work.
+            kv.second->hits_snapshot = ++m_blacklist_size;  // Any non-zero number will work.
         }
       }
     };
@@ -258,14 +257,14 @@ void BranchWatch::IsolateNotOverwritten(const CPUThreadGuard& guard)
     // Same dirty hack with != rather than ==, see above for details
     const auto routine = [&](Collection& collection, PowerPC::RequestedAddressSpace address_space) {
       for (Collection::value_type& kv : collection)
-        if (kv.second.hits_snapshot == 0)
+        if (kv.second->hits_snapshot == 0)
         {
           const std::optional read_result =
               PowerPC::MMU::HostTryReadInstruction(guard, kv.first.origin_addr, address_space);
           if (!read_result.has_value())
             continue;
           if (kv.first.original_inst.hex != read_result->value)
-            kv.second.hits_snapshot = ++m_blacklist_size;  // Any non-zero number will work.
+            kv.second->hits_snapshot = ++m_blacklist_size;  // Any non-zero number will work.
         }
     };
     routine(m_collection_vt, PowerPC::RequestedAddressSpace::Virtual);
@@ -294,7 +293,7 @@ void BranchWatch::UpdateHitsSnapshot()
   {
   case Phase::Reduction:
     for (Selection::value_type& value : m_selection)
-      value.collection_ptr->second.hits_snapshot = value.collection_ptr->second.total_hits;
+      value.collection_ptr->second->hits_snapshot = value.collection_ptr->second->total_hits;
     return;
   case Phase::Blacklist:
     return;

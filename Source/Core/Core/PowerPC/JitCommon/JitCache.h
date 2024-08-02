@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstring>
 #include <functional>
+#include <list>
 #include <map>
 #include <memory>
 #include <set>
@@ -17,6 +18,7 @@
 #include <vector>
 
 #include "Common/CommonTypes.h"
+#include "Core/Debugger/BranchWatch.h"
 #include "Core/HW/Memmap.h"
 #include "Core/PowerPC/Gekko.h"
 
@@ -104,6 +106,8 @@ struct JitBlock : public JitBlockData
 
   // This set stores all physical addresses of all occupied instructions.
   std::set<u32> physical_addresses;
+
+  std::list<Core::BranchWatchCachedHit> branch_watch_cached_hits;
 
   std::unique_ptr<ProfileData> profile_data;
 };

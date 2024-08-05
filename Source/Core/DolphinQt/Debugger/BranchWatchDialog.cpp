@@ -112,8 +112,9 @@ private:
 
   QString m_origin_symbol_name = {}, m_destin_symbol_name = {};
   std::optional<u32> m_origin_min, m_origin_max, m_destin_min, m_destin_max;
-  bool m_b = {}, m_bl = {}, m_bc = {}, m_bcl = {}, m_blr = {}, m_blrl = {}, m_bclr = {},
-       m_bclrl = {}, m_bctr = {}, m_bctrl = {}, m_bcctr = {}, m_bcctrl = {};
+  bool m_b = {}, m_bl = {}, m_ba = {}, m_bla = {}, m_bc = {}, m_bcl = {}, m_bca = {}, m_bcla = {},
+       m_blr = {}, m_blrl = {}, m_bclr = {}, m_bclrl = {}, m_bctr = {}, m_bctrl = {}, m_bcctr = {},
+       m_bcctrl = {}, m_bc_1z1zz = {}, m_bcl_1z1zz = {}, m_bca_1z1zz = {}, m_bcla_1z1zz = {};
   bool m_cond_true = {}, m_cond_false = {};
 };
 
@@ -163,9 +164,12 @@ bool BranchWatchProxyModel::IsBranchTypeAllowed(UGeckoInstruction inst) const
   switch (inst.OPCD)
   {
   case 18:
-    return inst.LK ? m_bl : m_b;
+    return inst.AA ? (inst.LK ? m_bla : m_ba) : (inst.LK ? m_bl : m_b);
   case 16:
-    return inst.LK ? m_bcl : m_bc;
+    if ((inst.BO & 0b10100) == 0b10100)  // 1z1zz - Branch always
+      return inst.AA ? (inst.LK ? m_bcla_1z1zz : m_bca_1z1zz) :
+                       (inst.LK ? m_bcl_1z1zz : m_bc_1z1zz);
+    return inst.AA ? (inst.LK ? m_bcla : m_bca) : (inst.LK ? m_bcl : m_bc);
   case 19:
     switch (inst.SUBOP10)
     {
@@ -322,6 +326,41 @@ BranchWatchDialog::BranchWatchDialog(Core::System& system, Core::BranchWatch& br
 
     m_act_branch_type_filters = m_control_toolbar->addWidget(group_box);
   }
+  {
+    // Rare Branch Type Filter Options
+    auto* const layout = new QGridLayout;
+
+    const auto routine = [this, layout](const QString& text, const QString& tooltip, int row,
+                                        int column, void (BranchWatchProxyModel::*slot)(bool)) {
+      auto* const check_box = new QCheckBox(text);
+      check_box->setToolTip(tooltip);
+      layout->addWidget(check_box, row, column);
+      connect(check_box, &QCheckBox::toggled, [this, slot](bool checked) {
+        (m_table_proxy->*slot)(checked);
+        UpdateStatus();
+      });
+      check_box->setChecked(true);
+    };
+
+    // clang-format off
+    routine(QStringLiteral("ba"         ), tr("Branch Absolute"                                         ), 0, 0, &BranchWatchProxyModel::OnToggled<&BranchWatchProxyModel::m_ba        >);
+    routine(QStringLiteral("bla"        ), tr("Branch Absolute (LR saved)"                              ), 1, 0, &BranchWatchProxyModel::OnToggled<&BranchWatchProxyModel::m_bla       >);
+    routine(QStringLiteral("bca"        ), tr("Branch Conditional Absolute"                             ), 2, 0, &BranchWatchProxyModel::OnToggled<&BranchWatchProxyModel::m_bca       >);
+    routine(QStringLiteral("bcla"       ), tr("Branch Conditional Absolute (LR saved)"                  ), 3, 0, &BranchWatchProxyModel::OnToggled<&BranchWatchProxyModel::m_bcla      >);
+    // i18n: These are conditional branch instructions with configurations that cause them to jump unconditionally.
+    // This unusual configuration lacks a simplified mnemonic, so here they are described with the word "always".
+    routine(            tr("bc always"  ), tr("Branch Conditional Always"                               ), 0, 1, &BranchWatchProxyModel::OnToggled<&BranchWatchProxyModel::m_bc_1z1zz  >);
+    routine(            tr("bcl always" ), tr("Branch Conditional Always (LR saved)"                    ), 1, 1, &BranchWatchProxyModel::OnToggled<&BranchWatchProxyModel::m_bcl_1z1zz >);
+    routine(            tr("bca always" ), tr("Branch Conditional Absolute Always"                      ), 2, 1, &BranchWatchProxyModel::OnToggled<&BranchWatchProxyModel::m_bca_1z1zz >);
+    routine(            tr("bcla always"), tr("Branch Conditional Absolute Always (LR saved)"           ), 3, 1, &BranchWatchProxyModel::OnToggled<&BranchWatchProxyModel::m_bcla_1z1zz>);
+    // clang-format on
+
+    auto* const group_box = new QGroupBox(tr("Rare Branch Type"), this);
+    group_box->setLayout(layout);
+    group_box->setAlignment(Qt::AlignHCenter);
+
+    m_act_rare_branch_type_filters = m_control_toolbar->addWidget(group_box);
+  };
   {
     // Origin and Destination Filter Options
     auto* const layout = new QGridLayout;
@@ -495,6 +534,7 @@ BranchWatchDialog::BranchWatchDialog(Core::System& system, Core::BranchWatch& br
       menu_action->setCheckable(true);
     };
     routine(tr("&Branch Type"), m_act_branch_type_filters);
+    routine(tr("&Rare Branch Type"), m_act_rare_branch_type_filters);
     routine(tr("&Origin and Destination"), m_act_origin_destin_filters);
     routine(tr("&Condition"), m_act_condition_filters);
     routine(tr("&Misc. Controls"), m_act_misc_controls);
@@ -1017,6 +1057,9 @@ void BranchWatchDialog::LoadQSettings()
       settings.value(QStringLiteral("branchwatchdialog/tableheader/state")).toByteArray());
   m_act_branch_type_filters->setVisible(
       !settings.value(QStringLiteral("branchwatchdialog/toolbar/branch_type_hidden")).toBool());
+  m_act_rare_branch_type_filters->setVisible(
+      !settings.value(QStringLiteral("branchwatchdialog/toolbar/rare_branch_type_hidden"))
+           .toBool());
   m_act_origin_destin_filters->setVisible(
       !settings.value(QStringLiteral("branchwatchdialog/toolbar/origin_destin_hidden")).toBool());
   m_act_condition_filters->setVisible(
@@ -1033,6 +1076,8 @@ void BranchWatchDialog::SaveQSettings() const
                     m_table_view->horizontalHeader()->saveState());
   settings.setValue(QStringLiteral("branchwatchdialog/toolbar/branch_type_hidden"),
                     !m_act_branch_type_filters->isVisible());
+  settings.setValue(QStringLiteral("branchwatchdialog/toolbar/rare_branch_type_hidden"),
+                    !m_act_rare_branch_type_filters->isVisible());
   settings.setValue(QStringLiteral("branchwatchdialog/toolbar/origin_destin_hidden"),
                     !m_act_origin_destin_filters->isVisible());
   settings.setValue(QStringLiteral("branchwatchdialog/toolbar/condition_hidden"),
